@@ -24,8 +24,8 @@ const char* WIFI_SSID = "Your_WiFi_SSID";
 const char* WIFI_PASS = "Your_WiFi_Password";
 
 // Supabase Configuration
-const char* SUPABASE_URL = "https://your-project-id.supabase.co"; 
-const char* SUPABASE_KEY = "your-anon-key"; // Or use a Service Role key cautiously if RLS allows
+const char* SUPABASE_URL = "https://zelpaafberhmslyoegzu.supabase.co"; 
+const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InplbHBhYWZiZXJobXNseW9lZ3p1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwMTkxNTYsImV4cCI6MjA4NDU5NTE1Nn0.LOuknCbvzw5CryGX2eta2vgkx5IvrE1mxPaUDBBeDD8"; // Or use a Service Role key cautiously if RLS allows
 
 // Device Identity
 // In production, this might be derived from ESP.getEfuseMac()
