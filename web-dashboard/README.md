@@ -1,40 +1,73 @@
-# AutoBell Web Dashboard Setup
+# React + TypeScript + Vite
 
-This is a Next.js web application that serves as the control panel for your AutoBell SaaS system. It is mobile-responsive, so it acts as both your Web Portal and Mobile App.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-## Prerequisites
-1.  **Node.js**: Installed on your computer.
-2.  **Supabase Project**: You need the URL and ANON KEY from your Supabase project settings.
+Currently, two official plugins are available:
 
-## Setup Steps
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-1.  **Install Dependencies**
-    ```bash
-    cd web-dashboard
-    npm install
-    ```
+## React Compiler
 
-2.  **Configure Environment Variables**
-    Create a file named `.env.local` in the `web-dashboard` folder and add your keys:
-    ```env
-    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-    NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
-    ```
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-3.  **Run Locally**
-    ```bash
-    npm run dev
-    ```
-    Open `http://localhost:3000` in your browser.
+## Expanding the ESLint configuration
 
-## Deployment (SaaS)
-To make this accessible to your users worldwide:
-1.  Push this code to **GitHub**.
-2.  Connect your GitHub repo to **Vercel** (vercel.com).
-3.  Add the same Environment Variables in Vercel settings.
-4.  Your app will be live at `https://autobell-dashboard.vercel.app`.
+If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
 
-## Mobile App Strategy
-This web app is **Responsive**.
--   **Android**: Open in Chrome -> Menu -> "Add to Home Screen". It will look and feel like an app.
--   **iOS**: Open in Safari -> Share -> "Add to Home Screen".
+```js
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+
+      // Remove tseslint.configs.recommended and replace with this
+      tseslint.configs.recommendedTypeChecked,
+      // Alternatively, use this for stricter rules
+      tseslint.configs.strictTypeChecked,
+      // Optionally, add this for stylistic rules
+      tseslint.configs.stylisticTypeChecked,
+
+      // Other configs...
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
+```
+
+You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+
+```js
+// eslint.config.js
+import reactX from 'eslint-plugin-react-x'
+import reactDom from 'eslint-plugin-react-dom'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+      // Enable lint rules for React
+      reactX.configs['recommended-typescript'],
+      // Enable lint rules for React DOM
+      reactDom.configs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
+```
