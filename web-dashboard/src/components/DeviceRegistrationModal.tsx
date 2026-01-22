@@ -4,12 +4,12 @@ import { X } from 'lucide-react'
 interface DeviceRegistrationModalProps {
   isOpen: boolean
   onClose: () => void
-  onRegister: (data: { name: string; mac_address: string }) => Promise<void>
+  onRegister: (data: { name: string; serial_number: string }) => Promise<void>
 }
 
 export function DeviceRegistrationModal({ isOpen, onClose, onRegister }: DeviceRegistrationModalProps) {
   const [name, setName] = useState('')
-  const [macAddress, setMacAddress] = useState('')
+  const [serialNumber, setSerialNumber] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -21,9 +21,9 @@ export function DeviceRegistrationModal({ isOpen, onClose, onRegister }: DeviceR
     setIsLoading(true)
 
     try {
-      await onRegister({ name, mac_address: macAddress })
+      await onRegister({ name, serial_number: serialNumber })
       setName('')
-      setMacAddress('')
+      setSerialNumber('')
       onClose()
     } catch (err: any) {
       setError(err.message || 'Failed to register device')
@@ -59,18 +59,21 @@ export function DeviceRegistrationModal({ isOpen, onClose, onRegister }: DeviceR
           </div>
 
           <div>
-            <label htmlFor="mac" className="block text-sm font-medium text-gray-700">
-              MAC Address
+            <label htmlFor="serial" className="block text-sm font-medium text-gray-700">
+              Serial Number
             </label>
             <input
               type="text"
-              id="mac"
-              value={macAddress}
-              onChange={(e) => setMacAddress(e.target.value)}
+              id="serial"
+              value={serialNumber}
+              onChange={(e) => setSerialNumber(e.target.value)}
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="e.g., AA:BB:CC:DD:EE:FF"
+              placeholder="Enter device serial number"
               required
             />
+            <p className="mt-1 text-xs text-gray-500">
+              Enter the serial number found on the device label.
+            </p>
           </div>
 
           {error && (

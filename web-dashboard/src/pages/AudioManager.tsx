@@ -2,11 +2,13 @@ import { useState, useRef } from 'react'
 import { Upload, Play, Pause, Trash2, Music, Loader2 } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
 
 export default function AudioManager() {
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  const { schoolId } = useAuth()
 
   const { data: files = [] } = useQuery({
     queryKey: ['audio_files'],
@@ -16,18 +18,27 @@ export default function AudioManager() {
             console.warn("Error fetching audio files:", error)
             return []
         }
-        return data
+        
+        return data.map(file => {
+            const { data: { publicUrl } } = supabase.storage.from('audio_files').getPublicUrl(file.storage_path)
+            return {
+                ...file,
+                url: publicUrl,
+                size: 'Unknown' 
+            }
+        })
     }
   })
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
+      if (!schoolId) throw new Error("No school ID found")
       setUploading(true)
       try {
         // 1. Upload file to storage
         const fileExt = file.name.split('.').pop()
         const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
-        const filePath = `${fileName}`
+        const filePath = `${schoolId}/${fileName}` // Use schoolId in path for organization
 
         const { error: uploadError } = await supabase.storage
           .from('audio_files')
@@ -35,19 +46,14 @@ export default function AudioManager() {
 
         if (uploadError) throw uploadError
 
-        // 2. Get public URL
-        const { data: { publicUrl } } = supabase.storage
-          .from('audio_files')
-          .getPublicUrl(filePath)
-
-        // 3. Insert metadata into database
+        // 2. Insert metadata into database
         const { error: dbError } = await supabase
           .from('audio_files')
           .insert({
             name: file.name,
-            url: publicUrl,
-            size: formatFileSize(file.size),
-            // duration: 0, // We might need to calculate this, but skipping for now or setting 0
+            storage_path: filePath,
+            school_id: schoolId,
+            duration: 0
           })
 
         if (dbError) throw dbError
@@ -65,19 +71,40 @@ export default function AudioManager() {
     }
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: async (file: any) => {
+      // 1. Delete from storage
+      const { error: storageError } = await supabase.storage
+        .from('audio_files')
+        .remove([file.storage_path])
+
+      if (storageError) {
+          console.warn("Storage delete error:", storageError)
+          // Continue to delete from DB even if storage fails (maybe orphan)
+      }
+
+      // 2. Delete from database
+      const { error: dbError } = await supabase
+        .from('audio_files')
+        .delete()
+        .eq('id', file.id)
+
+      if (dbError) throw dbError
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['audio_files'] })
+    },
+    onError: (error) => {
+      console.error('Delete failed:', error)
+      alert('Failed to delete audio file')
+    }
+  })
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
       uploadMutation.mutate(file)
     }
-  }
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
   const [playing, setPlaying] = useState<string | null>(null)
@@ -141,7 +168,10 @@ export default function AudioManager() {
               >
                 {playing === file.id ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
               </button>
-              <button className="text-red-500 hover:text-red-700">
+              <button 
+                onClick={() => deleteMutation.mutate(file)}
+                className="text-red-500 hover:text-red-700"
+              >
                 <Trash2 className="h-5 w-5" />
               </button>
             </div>

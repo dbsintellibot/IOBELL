@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Plus, Trash2, Edit2, Save, Loader2 } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
 
 // Types would normally be in a types file
 type BellProfile = {
@@ -20,6 +21,7 @@ type ScheduleItem = {
 }
 
 export default function ProfileEditor() {
+    const { schoolId } = useAuth()
     const queryClient = useQueryClient()
     const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
     const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -122,7 +124,8 @@ export default function ProfileEditor() {
                 name: item.name,
                 audio_file: item.audio_file,
                 day_of_week: item.day_of_week,
-                profile_id: selectedProfileId
+                profile_id: selectedProfileId,
+                school_id: schoolId
             }))
 
             if (itemsToInsert.length > 0) {

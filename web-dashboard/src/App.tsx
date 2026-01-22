@@ -8,6 +8,10 @@ import BellManagement from '@/pages/BellManagement'
 import ProfileEditor from '@/pages/ProfileEditor'
 import AudioManager from '@/pages/AudioManager'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
+import SuperAdminLayout from '@/layout/SuperAdminLayout'
+import SuperAdminOverview from '@/pages/super-admin/Overview'
+import SchoolManagement from '@/pages/super-admin/SchoolManagement'
+import InventoryManagement from '@/pages/super-admin/InventoryManagement'
 
 function App() {
   return (
@@ -17,6 +21,16 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             
+            {/* Super Admin Routes */}
+            <Route element={<ProtectedRoute requiredRole="super_admin" />}>
+              <Route path="/super-admin" element={<SuperAdminLayout />}>
+                <Route index element={<SuperAdminOverview />} />
+                <Route path="schools" element={<SchoolManagement />} />
+                <Route path="inventory" element={<InventoryManagement />} />
+              </Route>
+            </Route>
+
+            {/* School Admin / Operator Routes */}
             <Route element={<ProtectedRoute />}>
               <Route path="/dashboard" element={<DashboardLayout />}>
                 <Route index element={<Overview />} />

@@ -3,8 +3,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Wifi, WifiOff, Settings, RefreshCw } from 'lucide-react'
 import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal'
+import { useAuth } from '@/context/AuthContext'
 
 export default function BellManagement() {
+  const { schoolId } = useAuth()
   const queryClient = useQueryClient()
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false)
 
@@ -22,11 +24,16 @@ export default function BellManagement() {
   })
 
   const registerDeviceMutation = useMutation({
-    mutationFn: async (newDevice: { name: string; mac_address: string }) => {
-      const { error } = await supabase.from('bell_devices').insert({
-        ...newDevice,
-        status: 'offline'
+    mutationFn: async (newDevice: { name: string; serial_number: string }) => {
+      if (!schoolId) {
+        throw new Error('You must be logged in with a valid school ID to register devices.')
+      }
+
+      const { error } = await supabase.rpc('claim_device', {
+        p_serial_number: newDevice.serial_number,
+        p_device_name: newDevice.name
       })
+      
       if (error) throw error
     },
     onSuccess: () => {
@@ -36,7 +43,7 @@ export default function BellManagement() {
     },
     onError: (error) => {
       console.error('Error registering device:', error)
-      throw error
+      alert(error instanceof Error ? error.message : 'Failed to register device. Please try again.')
     }
   })
 
