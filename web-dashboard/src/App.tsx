@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from '@/context/AuthContext'
 import { QueryProvider } from '@/providers/QueryProvider'
 import Login from '@/pages/Login'
@@ -12,6 +12,7 @@ import SuperAdminLayout from '@/layout/SuperAdminLayout'
 import SuperAdminOverview from '@/pages/super-admin/Overview'
 import SchoolManagement from '@/pages/super-admin/SchoolManagement'
 import InventoryManagement from '@/pages/super-admin/InventoryManagement'
+import { IndexRedirect } from '@/components/IndexRedirect'
 
 function App() {
   return (
@@ -40,7 +41,7 @@ function App() {
               </Route>
             </Route>
 
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<IndexRedirect />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
