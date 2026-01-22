@@ -1,11 +1,13 @@
 import { useAuth } from '@/context/AuthContext'
 import { Link, Outlet, useLocation } from 'react-router-dom'
-import { Bell, Calendar, Home, Mic, LogOut, AlertTriangle, Wifi } from 'lucide-react'
+import { Bell, Calendar, Home, Mic, LogOut, AlertTriangle, Wifi, Menu, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useState } from 'react'
 
 export default function DashboardLayout() {
   const { signOut } = useAuth()
   const location = useLocation()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const navigation = [
     { name: 'Overview', href: '/dashboard', icon: Home },
@@ -20,9 +22,75 @@ export default function DashboardLayout() {
       return false
   }
 
+  const handleEmergencyStop = () => {
+    // TODO: Implement actual emergency stop logic (API call)
+    if (window.confirm('ARE YOU SURE? This will stop all bells immediately.')) {
+        alert('Emergency Stop Triggered (Simulation)')
+        console.log('Emergency Stop Triggered')
+    }
+  }
+
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Sidebar */}
+      {/* Mobile Sidebar Overlay */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-40 flex md:hidden">
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setMobileMenuOpen(false)}></div>
+          <div className="relative flex w-full max-w-xs flex-1 flex-col bg-white pt-5 pb-4">
+            <div className="absolute top-0 right-0 -mr-12 pt-2">
+              <button
+                className="ml-1 flex h-10 w-10 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <X className="h-6 w-6 text-white" />
+              </button>
+            </div>
+            <div className="flex flex-shrink-0 items-center px-4">
+               <Bell className="h-8 w-8 text-blue-600" />
+               <span className="ml-2 text-xl font-bold text-gray-800">AutoBell</span>
+            </div>
+            <div className="mt-5 h-0 flex-1 overflow-y-auto">
+              <nav className="space-y-1 px-2">
+                {navigation.map((item) => (
+                  <Link
+                    key={item.name}
+                    to={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      'group flex items-center rounded-md px-2 py-2 text-base font-medium',
+                      isActive(item.href)
+                        ? 'bg-blue-50 text-blue-600'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                    )}
+                  >
+                    <item.icon
+                      className={cn(
+                        'mr-4 h-6 w-6 flex-shrink-0',
+                        isActive(item.href) ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-500'
+                      )}
+                    />
+                    {item.name}
+                  </Link>
+                ))}
+              </nav>
+            </div>
+             <div className="border-t p-4">
+                <button
+                    onClick={() => {
+                        setMobileMenuOpen(false)
+                        signOut()
+                    }}
+                    className="group flex w-full items-center rounded-md px-2 py-2 text-base font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                >
+                    <LogOut className="mr-4 h-6 w-6 text-gray-400 group-hover:text-gray-500" />
+                    Sign Out
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Desktop Sidebar */}
       <div className="hidden w-64 flex-col bg-white shadow-lg md:flex">
         <div className="flex h-16 items-center justify-center border-b px-4">
           <Bell className="h-6 w-6 text-blue-600" />
@@ -63,16 +131,28 @@ export default function DashboardLayout() {
 
       {/* Main content */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 items-center justify-between bg-white px-6 shadow-sm md:px-8">
-            <h1 className="text-lg font-semibold text-gray-800">
-                {navigation.find(n => isActive(n.href))?.name || 'Dashboard'}
-            </h1>
-            <button className="flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 shadow-sm transition-colors animate-pulse">
+        <header className="flex h-16 items-center justify-between bg-white px-4 shadow-sm md:px-8">
+            <div className="flex items-center">
+                <button
+                    className="mr-4 text-gray-500 focus:outline-none md:hidden"
+                    onClick={() => setMobileMenuOpen(true)}
+                >
+                    <Menu className="h-6 w-6" />
+                </button>
+                <h1 className="text-lg font-semibold text-gray-800">
+                    {navigation.find(n => isActive(n.href))?.name || 'Dashboard'}
+                </h1>
+            </div>
+            <button 
+                onClick={handleEmergencyStop}
+                className="flex items-center gap-2 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 shadow-sm transition-colors animate-pulse"
+            >
                 <AlertTriangle className="h-4 w-4" />
-                EMERGENCY STOP
+                <span className="hidden sm:inline">EMERGENCY STOP</span>
+                <span className="sm:hidden">STOP</span>
             </button>
         </header>
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">
           <Outlet />
         </main>
       </div>
