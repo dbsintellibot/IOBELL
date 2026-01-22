@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Wifi, WifiOff, Settings, RefreshCw } from 'lucide-react'
+import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal'
 
 export default function BellManagement() {
   const queryClient = useQueryClient()
+  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false)
 
   const { data: devices, isLoading } = useQuery({
     queryKey: ['devices'],
@@ -16,6 +19,25 @@ export default function BellManagement() {
       return data
     },
     refetchInterval: 30000 // Refresh every 30 seconds
+  })
+
+  const registerDeviceMutation = useMutation({
+    mutationFn: async (newDevice: { name: string; mac_address: string }) => {
+      const { error } = await supabase.from('bell_devices').insert({
+        ...newDevice,
+        status: 'offline'
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      setIsRegisterModalOpen(false)
+      alert('Device registered successfully!')
+    },
+    onError: (error) => {
+      console.error('Error registering device:', error)
+      throw error
+    }
   })
 
   const sendCommandMutation = useMutation({
@@ -44,7 +66,10 @@ export default function BellManagement() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900">Bell Management</h2>
-        <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+        <button 
+          onClick={() => setIsRegisterModalOpen(true)}
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
           Register New Device
         </button>
       </div>
@@ -114,6 +139,14 @@ export default function BellManagement() {
           </tbody>
         </table>
       </div>
+      
+      <DeviceRegistrationModal 
+        isOpen={isRegisterModalOpen}
+        onClose={() => setIsRegisterModalOpen(false)}
+        onRegister={async (data) => {
+          await registerDeviceMutation.mutateAsync(data)
+        }}
+      />
     </div>
   )
 }
