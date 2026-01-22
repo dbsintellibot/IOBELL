@@ -1,0 +1,28 @@
+{
+  "name": "autobell",
+  "version": "1.0.0",
+  "description": "AutoBell is a smart IoT solution designed to modernize school bell systems. It allows school administrators to manage bell schedules remotely via a web dashboard or mobile app, with reliable execution by ESP32-based controllers installed on-site.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "supabase": "supabase"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dbsintellibot/IOBELL.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/dbsintellibot/IOBELL/issues"
+  },
+  "homepage": "https://github.com/dbsintellibot/IOBELL#readme",
+  "devDependencies": {
+    "supabase": "^2.72.8"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.91.0"
+  }
+}
