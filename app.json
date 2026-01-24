@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "b4b1b8f9-291e-4598-b7dc-e095cb9651e3"
+      }
+    },
+    "android": {
+      "package": "com.iobell.autobell"
+    }
+  }
+}

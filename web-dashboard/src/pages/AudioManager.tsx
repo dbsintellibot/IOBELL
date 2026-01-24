@@ -2,7 +2,21 @@ import { useState, useRef } from 'react'
 import { Upload, Play, Pause, Trash2, Music, Loader2 } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/hooks/useAuth'
+
+type AudioFileRecord = {
+  id: string
+  name: string
+  storage_path: string
+  created_at: string
+  duration: number | null
+  school_id: string
+}
+
+type AudioFileItem = AudioFileRecord & {
+  url: string
+  size: string
+}
 
 export default function AudioManager() {
   const queryClient = useQueryClient()
@@ -10,7 +24,7 @@ export default function AudioManager() {
   const [uploading, setUploading] = useState(false)
   const { schoolId } = useAuth()
 
-  const { data: files = [] } = useQuery({
+  const { data: files = [] } = useQuery<AudioFileItem[]>({
     queryKey: ['audio_files'],
     queryFn: async () => {
         const { data, error } = await supabase.from('audio_files').select('*').order('created_at', { ascending: false })
@@ -19,8 +33,10 @@ export default function AudioManager() {
             return []
         }
         
-        return data.map(file => {
-            const { data: { publicUrl } } = supabase.storage.from('audio_files').getPublicUrl(file.storage_path)
+        const records = (data ?? []) as AudioFileRecord[]
+
+        return records.map(file => {
+            const { data: { publicUrl } } = supabase.storage.from('audio-files').getPublicUrl(file.storage_path)
             return {
                 ...file,
                 url: publicUrl,
@@ -41,7 +57,7 @@ export default function AudioManager() {
         const filePath = `${schoolId}/${fileName}` // Use schoolId in path for organization
 
         const { error: uploadError } = await supabase.storage
-          .from('audio_files')
+          .from('audio-files')
           .upload(filePath, file)
 
         if (uploadError) throw uploadError
@@ -72,10 +88,10 @@ export default function AudioManager() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: async (file: any) => {
+    mutationFn: async (file: AudioFileItem) => {
       // 1. Delete from storage
       const { error: storageError } = await supabase.storage
-        .from('audio_files')
+        .from('audio-files')
         .remove([file.storage_path])
 
       if (storageError) {

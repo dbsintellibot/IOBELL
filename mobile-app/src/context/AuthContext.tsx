@@ -39,13 +39,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchSchoolId = async (userId: string) => {
     try {
-        const { data } = await supabase
+        const { data, error } = await supabase
             .from('users')
             .select('school_id')
             .eq('id', userId)
             .single();
         
-        if (data) setSchoolId(data.school_id);
+        if (error) {
+            console.error('Error fetching school ID:', error);
+            // If user not found in public.users, it might be a new user or RLS issue.
+            // We'll leave schoolId as null, which might prompt a setup screen or "Contact Admin" message.
+        }
+        
+        if (data) {
+            setSchoolId(data.school_id);
+        } else {
+            console.warn('User found but no school_id in public.users');
+        }
     } catch (e) {
         console.error('Error fetching school ID:', e);
     } finally {

@@ -24,26 +24,19 @@ The ESP32 device authenticates using its **MAC Address**.
 
 ### 3.1. Heartbeat (Device -> Backend)
 
-**Endpoint:** `POST /functions/v1/device-heartbeat`
+**Endpoint:** `POST /rest/v1/rpc/update_heartbeat`
 
 **Request Payload:**
 ```json
 {
-  "mac_address": "24:6F:28:A1:B2:C3",
-  "uptime": 3600,             // System uptime in seconds
-  "wifi_signal": -55,         // RSSI in dBm
-  "current_profile_hash": "a1b2c3d4", // Hash of the currently stored schedule
-  "status": "online"          // Current device status
+  "p_device_id": "uuid-of-device",
+  "p_status": "online"
 }
 ```
 
 **Response Payload:**
 ```json
-{
-  "success": true,
-  "sync_required": false,      // true if profile_hash mismatch
-  "timestamp": "2023-10-27T10:00:00Z"
-}
+// 200 OK (void/null response)
 ```
 
 ### 3.2. Schedule Sync (Backend -> Device)

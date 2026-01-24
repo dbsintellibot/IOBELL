@@ -1,16 +1,24 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { Wifi, WifiOff, Settings, RefreshCw } from 'lucide-react'
+import { Wifi, WifiOff, Settings, RefreshCw, Bell } from 'lucide-react'
 import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/hooks/useAuth'
+
+type DeviceRecord = {
+  id: string
+  name: string
+  status: string | null
+  mac_address: string | null
+  last_heartbeat: string | null
+}
 
 export default function BellManagement() {
   const { schoolId } = useAuth()
   const queryClient = useQueryClient()
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false)
 
-  const { data: devices, isLoading } = useQuery({
+  const { data: devices, isLoading } = useQuery<DeviceRecord[]>({
     queryKey: ['devices'],
     queryFn: async () => {
       const { data, error } = await supabase.from('bell_devices').select('*').order('name')
@@ -18,9 +26,9 @@ export default function BellManagement() {
         console.error("Error fetching devices:", error)
         throw error
       }
-      return data
+      return (data ?? []) as DeviceRecord[]
     },
-    refetchInterval: 30000 // Refresh every 30 seconds
+    refetchInterval: 5000 // Refresh every 5 seconds to catch heartbeats
   })
 
   const registerDeviceMutation = useMutation({
@@ -48,9 +56,12 @@ export default function BellManagement() {
   })
 
   const sendCommandMutation = useMutation({
-    mutationFn: async ({ deviceId, command, payload = {} }: { deviceId: string, command: string, payload?: any }) => {
+    mutationFn: async ({ deviceId, command, payload = {} }: { deviceId: string, command: string, payload?: Record<string, unknown> }) => {
+      if (!schoolId) throw new Error('No school ID found')
+      
       const { error } = await supabase.from('command_queue').insert({
         device_id: deviceId,
+        school_id: schoolId,
         command,
         payload
       })
@@ -138,6 +149,14 @@ export default function BellManagement() {
                     >
                         <RefreshCw className="h-4 w-4 mr-1" />
                         Reboot
+                    </button>
+                    <button 
+                        onClick={() => sendCommandMutation.mutate({ deviceId: device.id, command: 'TEST_BUZZER' })}
+                        className="text-orange-600 hover:text-orange-900 inline-flex items-center ml-4"
+                        disabled={sendCommandMutation.isPending}
+                    >
+                        <Bell className="h-4 w-4 mr-1" />
+                        Test Buzzer
                     </button>
                     </td>
                 </tr>

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -29,7 +29,8 @@ export default function Login() {
     if (error) {
       setError(error.message)
     } else {
-      navigate('/dashboard')
+      // Redirect to root to let IndexRedirect handle role-based routing
+      navigate('/')
     }
     setLoading(false)
   }

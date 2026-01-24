@@ -11,6 +11,7 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import SuperAdminLayout from '@/layout/SuperAdminLayout'
 import SuperAdminOverview from '@/pages/super-admin/Overview'
 import SchoolManagement from '@/pages/super-admin/SchoolManagement'
+import UserManagement from '@/pages/super-admin/UserManagement'
 import InventoryManagement from '@/pages/super-admin/InventoryManagement'
 import { IndexRedirect } from '@/components/IndexRedirect'
 
@@ -27,6 +28,7 @@ function App() {
               <Route path="/super-admin" element={<SuperAdminLayout />}>
                 <Route index element={<SuperAdminOverview />} />
                 <Route path="schools" element={<SchoolManagement />} />
+                <Route path="users" element={<UserManagement />} />
                 <Route path="inventory" element={<InventoryManagement />} />
               </Route>
             </Route>

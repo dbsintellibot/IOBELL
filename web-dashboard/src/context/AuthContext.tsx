@@ -1,23 +1,13 @@
-import { createContext, useContext, useEffect, useState } from 'react'
-import type { Session, User } from '@supabase/supabase-js'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-
-interface AuthContextType {
-  session: Session | null
-  user: User | null
-  schoolId: string | null
-  role: 'super_admin' | 'admin' | 'operator' | null
-  loading: boolean
-  signOut: () => Promise<void>
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
+import { AuthContext, type AuthRole } from './AuthContextValue'
+import type { Session, User } from '@supabase/supabase-js'
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [user, setUser] = useState<User | null>(null)
   const [schoolId, setSchoolId] = useState<string | null>(null)
-  const [role, setRole] = useState<'super_admin' | 'admin' | 'operator' | null>(null)
+  const [role, setRole] = useState<AuthRole>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchUserDetails = async (userId: string) => {
@@ -35,7 +25,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (data) {
         setSchoolId(data.school_id)
-        setRole(data.role as any)
+        const roleValue = data.role
+        if (roleValue === 'super_admin' || roleValue === 'admin' || roleValue === 'operator') {
+          setRole(roleValue)
+        } else {
+          setRole(null)
+        }
       }
     } catch (error) {
       console.error('Unexpected error fetching user details:', error)
@@ -85,12 +80,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export const useAuth = () => {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider')
-  }
-  return context
 }

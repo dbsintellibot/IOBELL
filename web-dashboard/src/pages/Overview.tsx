@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Bell, Wifi, Calendar, HardDrive, MapPin } from 'lucide-react'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function Overview() {
   const { schoolId } = useAuth()
@@ -13,43 +13,33 @@ export default function Overview() {
         { count: totalDevices },
         { count: onlineDevices },
         { count: totalProfiles },
-        { count: audioFilesCount }
+        { count: audioFilesCount },
+        schoolDataResult,
+        primaryDeviceResult,
+        firstDeviceResult
       ] = await Promise.all([
         supabase.from('bell_devices').select('*', { count: 'exact', head: true }),
         supabase.from('bell_devices').select('*', { count: 'exact', head: true }).eq('status', 'online'),
         supabase.from('bell_profiles').select('*', { count: 'exact', head: true }),
-        supabase.from('audio_files').select('*', { count: 'exact', head: true })
+        supabase.from('audio_files').select('*', { count: 'exact', head: true }),
+        // Fetch school name
+        schoolId 
+          ? supabase.from('schools').select('name').eq('id', schoolId).maybeSingle() 
+          : Promise.resolve({ data: null }),
+        // Fetch primary device (Online)
+        supabase.from('bell_devices').select('name, mac_address, location').eq('status', 'online').limit(1).maybeSingle(),
+        // Fetch fallback device (Any)
+        supabase.from('bell_devices').select('name, mac_address, location').limit(1).maybeSingle()
       ])
 
       let schoolName = 'My School'
-      if (schoolId) {
-        // Try to fetch school name if table exists, otherwise fallback
-        const { data: schoolData } = await supabase
-          .from('schools')
-          .select('name')
-          .eq('id', schoolId)
-          .maybeSingle()
-        
-        if (schoolData) {
-          schoolName = schoolData.name
-        }
+      if (schoolDataResult.data) {
+        schoolName = schoolDataResult.data.name
       }
 
-      // Fetch primary device (Online or First)
-      let { data: primaryDevice } = await supabase
-        .from('bell_devices')
-        .select('name, mac_address, location')
-        .eq('status', 'online')
-        .limit(1)
-        .maybeSingle()
-
+      let primaryDevice = primaryDeviceResult.data
       if (!primaryDevice) {
-        const { data: firstDevice } = await supabase
-          .from('bell_devices')
-          .select('name, mac_address, location')
-          .limit(1)
-          .maybeSingle()
-        primaryDevice = firstDevice
+        primaryDevice = firstDeviceResult.data
       }
 
       return {

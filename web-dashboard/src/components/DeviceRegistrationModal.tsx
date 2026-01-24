@@ -25,8 +25,8 @@ export function DeviceRegistrationModal({ isOpen, onClose, onRegister }: DeviceR
       setName('')
       setSerialNumber('')
       onClose()
-    } catch (err: any) {
-      setError(err.message || 'Failed to register device')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to register device')
     } finally {
       setIsLoading(false)
     }
@@ -72,7 +72,7 @@ export function DeviceRegistrationModal({ isOpen, onClose, onRegister }: DeviceR
               required
             />
             <p className="mt-1 text-xs text-gray-500">
-              Enter the serial number found on the device label.
+              Enter the serial number assigned to this device in the Inventory (Super Admin).
             </p>
           </div>
 

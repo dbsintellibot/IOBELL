@@ -14,8 +14,6 @@
 // CONFIGURATION
 // ==========================================
 
-// WiFi Credentials are now handled by WiFiManager
-
 // Supabase Configuration
 const char* SUPABASE_URL = "https://zelpaafberhmslyoegzu.supabase.co";
 const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InplbHBhYWZiZXJobXNseW9lZ3p1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwMTkxNTYsImV4cCI6MjA4NDU5NTE1Nn0.LOuknCbvzw5CryGX2eta2vgkx5IvrE1mxPaUDBBeDD8";
@@ -25,20 +23,23 @@ const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 #define PIN_DFPLAYER_TX 17 // Connect to DFPlayer RX
 #define PIN_LED_WIFI    2  // Built-in LED (ON = Connected)
 #define PIN_LED_ERROR   4  // Error LED
+#define PIN_BUZZER      13 // Buzzer Pin
 
 // Settings
 const long  UTC_OFFSET_SEC = 0; // Adjust timezone here or fetch from API
 const unsigned long SCHEDULE_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const unsigned long COMMAND_POLL_INTERVAL = 5 * 1000;      // 5 seconds
+const unsigned long HEARTBEAT_INTERVAL = 60 * 1000;        // 60 seconds
+const unsigned long PROVISION_POLL_INTERVAL = 10 * 1000;   // 10 seconds
 
 // ==========================================
 // GLOBALS
 // ==========================================
 
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", UTC_OFFSET_SEC);
 DFRobotDFPlayerMini myDFPlayer;
 HardwareSerial dfPlayerSerial(2); // Use UART2
+NTPClient timeClient(ntpUDP, "pool.ntp.org", UTC_OFFSET_SEC);
 
 Preferences preferences;
 char deviceName[40] = "AutoBell Device";
@@ -49,6 +50,17 @@ String deviceMacAddress;
 String deviceDbId = "";
 unsigned long lastScheduleSync = 0;
 unsigned long lastCommandPoll = 0;
+unsigned long lastHeartbeat = 0;
+unsigned long lastProvisionPoll = 0;
+unsigned long buzzerStartTime = 0;
+bool buzzerActive = false;
+
+enum DeviceState {
+    STATE_BOOT,
+    STATE_UNASSIGNED,
+    STATE_ACTIVE
+};
+DeviceState currentState = STATE_BOOT;
 
 struct ScheduleItem {
     int hour;
@@ -63,9 +75,11 @@ std::vector<ScheduleItem> activeSchedules;
 void fetchDeviceDetails();
 void syncSchedules();
 void pollCommands();
+void sendHeartbeat();
 void loadSchedulesFromStorage();
 void saveSchedulesToStorage(const String& jsonContent);
 void playBell();
+void testBuzzer();
 void parseSchedules(const String& jsonString);
 void saveConfigCallback();
 void performOTAUpdate(const String& url);
@@ -85,13 +99,14 @@ void setup() {
     
     pinMode(PIN_LED_WIFI, OUTPUT);
     pinMode(PIN_LED_ERROR, OUTPUT);
+    pinMode(PIN_BUZZER, OUTPUT);
     digitalWrite(PIN_LED_WIFI, LOW);
+    digitalWrite(PIN_BUZZER, LOW);
     
     // Init LittleFS
     if(!LittleFS.begin(true)){
         Serial.println("LittleFS Mount Failed");
         digitalWrite(PIN_LED_ERROR, HIGH);
-        // We continue, but storage won't work
     }
     
     // Init DFPlayer
@@ -105,12 +120,27 @@ void setup() {
         myDFPlayer.volume(20);  // Set volume value. From 0 to 30
     }
 
+    // Initialize WiFi to Station Mode to ensure MAC is readable
+    WiFi.mode(WIFI_STA);
+    delay(100);
+
     // Get MAC Address
     deviceMacAddress = WiFi.macAddress();
+    
+    // Retry if MAC is invalid
+    if (deviceMacAddress == "00:00:00:00:00:00") {
+        Serial.println("MAC is zero, retrying WiFi init...");
+        WiFi.disconnect(true);
+        delay(100);
+        WiFi.mode(WIFI_STA);
+        delay(500);
+        deviceMacAddress = WiFi.macAddress();
+    }
+    
     Serial.print("Device MAC: ");
     Serial.println(deviceMacAddress);
 
-    // Load cached schedules first (in case of no WiFi)
+    // Load cached schedules first
     loadSchedulesFromStorage();
 
     // WiFiManager
@@ -119,7 +149,7 @@ void setup() {
     
     // Custom params
     WiFiManagerParameter custom_device_name("name", "Device Name", deviceName, 40);
-    WiFiManagerParameter custom_school_id("school", "School ID", schoolId, 40);
+    WiFiManagerParameter custom_school_id("school", "School ID (Optional)", schoolId, 40);
     
     wm.addParameter(&custom_device_name);
     wm.addParameter(&custom_school_id);
@@ -128,7 +158,7 @@ void setup() {
     if (!wm.autoConnect("AutoBell-Setup")) {
         Serial.println("Failed to connect and hit timeout");
         delay(3000);
-        ESP.restart(); // Reset and try again
+        ESP.restart();
     }
 
     // If we get here, we are connected
@@ -145,54 +175,82 @@ void setup() {
         preferences.putString("school_id", schoolId);
         Serial.println("Saved custom parameters");
     }
-    preferences.end(); // Close preferences
-
-    // Initial Sync
-    syncSchedules();
+    
+    // Initial Device Fetch
+    fetchDeviceDetails();
 
     // Init NTP
+    timeClient.setUpdateInterval(86400000); // Sync every 24 hours
     timeClient.begin();
+    
+    if (currentState == STATE_ACTIVE) {
+        syncSchedules();
+    }
 }
 
 // ==========================================
 // LOOP
 // ==========================================
 void loop() {
+    // Buzzer Logic (Non-blocking)
+    if (buzzerActive && (millis() - buzzerStartTime >= 5000)) {
+        digitalWrite(PIN_BUZZER, LOW);
+        buzzerActive = false;
+        Serial.println("Buzzer OFF");
+    }
+
     // 1. WiFi Management
     if (WiFi.status() != WL_CONNECTED) {
         digitalWrite(PIN_LED_WIFI, LOW);
         Serial.println("WiFi lost, reconnecting...");
         WiFi.reconnect();
-        delay(5000); // Wait a bit before retry
+        delay(5000);
         return;
-    } else {
-        digitalWrite(PIN_LED_WIFI, HIGH);
     }
 
-    // 2. Update Time
+    // 2. State-Based Logic
+    if (currentState == STATE_UNASSIGNED) {
+        // Blink LED to indicate "Waiting for Assignment"
+        bool ledOn = (millis() / 1000) % 2 == 0;
+        digitalWrite(PIN_LED_WIFI, ledOn ? HIGH : LOW);
+        
+        // Poll for assignment
+        if (millis() - lastProvisionPoll >= PROVISION_POLL_INTERVAL) {
+            lastProvisionPoll = millis();
+            fetchDeviceDetails();
+            
+            // If we just got assigned, sync immediately
+            if (currentState == STATE_ACTIVE) {
+                Serial.println("Device Assigned! Switching to Active Mode.");
+                preferences.putString("school_id", schoolId); // Save the new school ID
+                syncSchedules();
+            }
+        }
+        return; // Skip active tasks
+    }
+
+    // --- ACTIVE STATE ---
+    digitalWrite(PIN_LED_WIFI, HIGH); // Solid ON
+
+    // 3. Update Time
     timeClient.update();
 
-    // 3. Scheduler Logic (Run every second)
+    // 4. Scheduler Logic (Run every second)
     static unsigned long lastTick = 0;
     if (millis() - lastTick >= 1000) {
         lastTick = millis();
         
         int currentDay = timeClient.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-        // Convert NTP day (0-6, Sun-Sat) to Database day (1-7, Mon-Sun)
-        // NTP: 0(Sun), 1(Mon), 2(Tue), 3(Wed), 4(Thu), 5(Fri), 6(Sat)
-        // DB:  7(Sun), 1(Mon), 2(Tue), 3(Wed), 4(Thu), 5(Fri), 6(Sat)
-        int dbDay = (currentDay == 0) ? 7 : currentDay;
+        int dbDay = (currentDay == 0) ? 7 : currentDay; // 1=Mon, ..., 7=Sun
         
         int currentH = timeClient.getHours();
         int currentM = timeClient.getMinutes();
         int currentS = timeClient.getSeconds();
 
-        // Only check at the start of the minute (00 seconds)
         if (currentS == 0) {
             Serial.printf("Time: %02d:%02d (Day: %d)\n", currentH, currentM, dbDay);
             for (const auto& sch : activeSchedules) {
                 if (sch.hour == currentH && sch.minute == currentM) {
-                    // Check if today is in the active days
                     bool dayMatch = false;
                     for(int d : sch.days) {
                         if(d == dbDay) {
@@ -200,7 +258,6 @@ void loop() {
                             break;
                         }
                     }
-                    
                     if(dayMatch) {
                         Serial.println("MATCH! Ringing Bell...");
                         playBell();
@@ -210,16 +267,22 @@ void loop() {
         }
     }
 
-    // 4. Poll Commands (Every 5s)
+    // 5. Poll Commands (Every 5s)
     if (millis() - lastCommandPoll >= COMMAND_POLL_INTERVAL) {
         lastCommandPoll = millis();
         pollCommands();
     }
 
-    // 5. Sync Schedules (Every 5m)
+    // 6. Sync Schedules (Every 5m)
     if (millis() - lastScheduleSync >= SCHEDULE_SYNC_INTERVAL) {
         lastScheduleSync = millis();
         syncSchedules();
+    }
+
+    // 7. Send Heartbeat (Every 60s)
+    if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL) {
+        lastHeartbeat = millis();
+        sendHeartbeat();
     }
 }
 
@@ -235,11 +298,24 @@ void saveConfigCallback() {
 void performOTAUpdate(const String& url) {
     Serial.println("OTA Update requested from: " + url);
     // TODO: Implement OTA
-    // This requires HTTPUpdate library and logic
 }
 
 void playBell() {
-    myDFPlayer.play(1); // Play the first mp3 on SD card
+    myDFPlayer.play(1);
+
+    // Activate Buzzer
+    digitalWrite(PIN_BUZZER, HIGH);
+    buzzerStartTime = millis();
+    buzzerActive = true;
+    Serial.println("Buzzer ON");
+}
+
+void testBuzzer() {
+    // Only Activate Buzzer (No Audio)
+    digitalWrite(PIN_BUZZER, HIGH);
+    buzzerStartTime = millis();
+    buzzerActive = true;
+    Serial.println("Buzzer Test ON");
 }
 
 // -------------------------------------------------------------------------
@@ -249,51 +325,104 @@ void playBell() {
 void fetchDeviceDetails() {
     if (WiFi.status() != WL_CONNECTED) return;
     
+    Serial.println("--- Fetching Device Details ---");
+    Serial.print("My MAC: ");
+    Serial.println(deviceMacAddress);
+
     HTTPClient http;
-    // URL encode is good practice, but for simple MAC it's fine
-    String url = String(SUPABASE_URL) + "/rest/v1/bell_devices?select=id,school_id&mac_address=eq." + deviceMacAddress;
+    String url = String(SUPABASE_URL) + "/rest/v1/rpc/register_device_from_esp";
     
     http.begin(url);
     http.addHeader("apikey", SUPABASE_KEY);
     http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    http.addHeader("Content-Type", "application/json");
     
-    int code = http.GET();
+    JsonDocument reqDoc;
+    reqDoc["p_mac_address"] = deviceMacAddress;
+    reqDoc["p_school_code"] = String(schoolId); // Sends "" if empty
+    reqDoc["p_device_name"] = String(deviceName);
+    
+    String body;
+    serializeJson(reqDoc, body);
+    
+    int code = http.POST(body);
+    
     if (code == 200) {
         String resp = http.getString();
+        Serial.print("Registration Response: ");
+        Serial.println(resp);
+
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, resp);
         
         if (!error && doc.size() > 0) {
             deviceDbId = doc[0]["id"].as<String>();
-            String sId = doc[0]["school_id"].as<String>();
-            sId.toCharArray(schoolId, 40); 
-            Serial.println("Fetched Device ID: " + deviceDbId);
+            String status = doc[0]["status"].as<String>();
+            
+            // Handle server messages (e.g. warnings about invalid code)
+            if (doc[0].containsKey("message")) {
+                String msg = doc[0]["message"].as<String>();
+                if (msg != "OK") {
+                    Serial.println("Server Message: " + msg);
+                    // If invalid code was sent, clear it from preferences
+                    if (msg.indexOf("Invalid School Code") >= 0) {
+                        Serial.println("Clearing invalid School ID/Code from preferences.");
+                        preferences.putString("school_id", "");
+                        strcpy(schoolId, "");
+                    }
+                }
+            }
+
+            // Check assignment
+            bool isAssigned = false;
+            if (doc[0]["school_id"].is<String>()) {
+                String sId = doc[0]["school_id"].as<String>();
+                if (sId.length() > 0) {
+                    sId.toCharArray(schoolId, 40);
+                    isAssigned = true;
+                }
+            }
+            
+            if (isAssigned) {
+                currentState = STATE_ACTIVE;
+                Serial.println("State: ACTIVE (Assigned to School)");
+                if (doc[0]["school_code"].is<String>()) {
+                    Serial.println("School Code: " + doc[0]["school_code"].as<String>());
+                }
+            } else {
+                currentState = STATE_UNASSIGNED;
+                Serial.println("State: UNASSIGNED (Waiting for Super Admin)");
+            }
+            
+            Serial.println("Device ID: " + deviceDbId);
         } else {
-            Serial.println("Device not found in DB or JSON error");
+            Serial.println("JSON Parse Error or Empty Response");
+            currentState = STATE_UNASSIGNED;
         }
     } else {
-        Serial.print("fetchDeviceDetails Error: ");
+        Serial.print("Registration Error: ");
         Serial.println(code);
+        Serial.println(http.getString());
+        // Keep current state (don't reset to Boot)
     }
     http.end();
 }
 
 void syncSchedules() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED || currentState != STATE_ACTIVE) return;
     
-    if (deviceDbId == "") {
-        fetchDeviceDetails();
-        if (deviceDbId == "") return;
-    }
-
-    // 1. Get Profile (assume first one for now)
+    // 1. Get Profile
     String profileId = "";
     {
         HTTPClient http;
+        // Use RPC to resolve profile for the assigned school
+        // Or query bell_profiles directly since we have schoolId (UUID)
+        
         String url = String(SUPABASE_URL) + "/rest/v1/bell_profiles?select=id&school_id=eq." + String(schoolId) + "&limit=1";
         http.begin(url);
         http.addHeader("apikey", SUPABASE_KEY);
         http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+        
         if (http.GET() == 200) {
              JsonDocument doc;
              deserializeJson(doc, http.getString());
@@ -319,10 +448,6 @@ void syncSchedules() {
     if (code == 200) {
         String resp = http.getString();
         
-        // Transform DB format to Local format
-        // DB: [ { "bell_time": "08:00:00", "day_of_week": [1,2,3] }, ... ]
-        // Local: { "schedules": [ { "bell_time": "...", "days_of_week": [...] } ] }
-        
         JsonDocument dbDoc;
         DeserializationError error = deserializeJson(dbDoc, resp);
         
@@ -343,21 +468,13 @@ void syncSchedules() {
             saveSchedulesToStorage(finalJson);
             parseSchedules(finalJson);
         }
-    } else {
-         Serial.print("syncSchedules Error: ");
-         Serial.println(code);
     }
     http.end();
 }
 
 void pollCommands() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED || currentState != STATE_ACTIVE) return;
     
-    if (deviceDbId == "") {
-        fetchDeviceDetails();
-        if (deviceDbId == "") return;
-    }
-
     HTTPClient http;
     String url = String(SUPABASE_URL) + "/rest/v1/command_queue?select=id,command,payload&status=eq.pending&device_id=eq." + deviceDbId + "&limit=1&order=created_at.asc";
     
@@ -384,6 +501,9 @@ void pollCommands() {
             if (strcmp(cmd, "RING") == 0) {
                 playBell();
                 executed = true;
+            } else if (strcmp(cmd, "TEST_BUZZER") == 0) {
+                testBuzzer();
+                executed = true;
             } else if (strcmp(cmd, "SYNC_TIME") == 0) {
                 timeClient.forceUpdate();
                 executed = true;
@@ -402,8 +522,7 @@ void pollCommands() {
                 ackHttp.addHeader("apikey", SUPABASE_KEY);
                 ackHttp.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
                 
-                String patchBody = "{\"status\": \"executed\"}"; // Timestamp handled by DB trigger or we can add it
-                // Using sendRequest for PATCH to be safe across ESP32 cores
+                String patchBody = "{\"status\": \"executed\"}";
                 int ackCode = ackHttp.sendRequest("PATCH", patchBody);
                 ackHttp.end();
                 Serial.printf("Ack sent: %d\n", ackCode);
@@ -422,9 +541,36 @@ void pollCommands() {
     http.end();
 }
 
-// -------------------------------------------------------------------------
+void sendHeartbeat() {
+    if (WiFi.status() != WL_CONNECTED || currentState != STATE_ACTIVE) return;
+    
+    Serial.println("Sending Heartbeat...");
+
+    HTTPClient http;
+    String url = String(SUPABASE_URL) + "/rest/v1/rpc/update_heartbeat";
+    
+    http.begin(url);
+    http.addHeader("apikey", SUPABASE_KEY);
+    http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    http.addHeader("Content-Type", "application/json");
+    
+    String payload = "{\"p_device_id\": \"" + deviceDbId + "\", \"p_status\": \"online\"}";
+    
+    int code = http.POST(payload);
+    
+    if (code == 200 || code == 204) {
+        Serial.println("Heartbeat sent successfully (RPC)");
+    } else {
+        Serial.print("Heartbeat failed: ");
+        Serial.println(code);
+        Serial.println(http.getString());
+    }
+    http.end();
+}
+
+// ==========================================
 // STORAGE & PARSING
-// -------------------------------------------------------------------------
+// ==========================================
 
 void saveSchedulesToStorage(const String& jsonContent) {
     File file = LittleFS.open("/schedules.json", "w");
@@ -456,8 +602,6 @@ void loadSchedulesFromStorage() {
 }
 
 void parseSchedules(const String& jsonString) {
-    // Response format from RPC: { "status": "ok", "schedules": [ { "bell_time": "08:30:00", "days_of_week": [1,2,3,4,5] }, ... ] }
-    
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, jsonString);
     
@@ -471,10 +615,9 @@ void parseSchedules(const String& jsonString) {
     JsonArray arr = doc["schedules"];
     
     for (JsonObject obj : arr) {
-        const char* timeStr = obj["bell_time"]; // "08:30:00"
+        const char* timeStr = obj["bell_time"];
         
         ScheduleItem item;
-        // Parse HH:MM:SS
         int h, m, s;
         sscanf(timeStr, "%d:%d:%d", &h, &m, &s);
         item.hour = h;

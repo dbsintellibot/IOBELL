@@ -1,6 +1,6 @@
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/hooks/useAuth'
 import { Link, Outlet, useLocation } from 'react-router-dom'
-import { LayoutDashboard, School, Package, LogOut, Menu, X } from 'lucide-react'
+import { LayoutDashboard, School, Package, LogOut, Menu, X, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 
@@ -12,6 +12,7 @@ export default function SuperAdminLayout() {
   const navigation = [
     { name: 'Overview', href: '/super-admin', icon: LayoutDashboard },
     { name: 'School Management', href: '/super-admin/schools', icon: School },
+    { name: 'User Management', href: '/super-admin/users', icon: Users },
     { name: 'Inventory', href: '/super-admin/inventory', icon: Package },
   ]
 
