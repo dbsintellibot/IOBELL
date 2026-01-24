@@ -12,6 +12,15 @@ type InventoryItem = {
   schools?: { name: string } | { name: string }[] | null
 }
 
+type BellDevice = {
+  id: string
+  mac_address: string
+  name: string | null
+  status: string | null
+  last_seen: string | null
+  school_id: string | null
+}
+
 export default function InventoryManagement() {
   const queryClient = useQueryClient()
   const [newItem, setNewItem] = useState({ serial_number: '', mac_address: '' })
@@ -25,18 +34,18 @@ export default function InventoryManagement() {
     }
   })
 
-  const { data: detectedDevices = [] } = useQuery({
+  const { data: detectedDevices = [] } = useQuery<BellDevice[]>({
     queryKey: ['detected_devices'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('bell_devices')
         .select('*')
       if (error) return []
-      return data
+      return data as BellDevice[]
     }
   })
 
-  const { data: inventory = [], isLoading } = useQuery({
+  const { data: inventory = [], isLoading } = useQuery<InventoryItem[]>({
     queryKey: ['device_inventory'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -49,12 +58,12 @@ export default function InventoryManagement() {
   })
 
   // Filter out devices that are already in inventory to show as "detected but unassigned/rogue"
-  const inventoryMacs = new Set(inventory.map((i: any) => i.mac_address))
-  const unassignedDevices = detectedDevices.filter((d: any) => !inventoryMacs.has(d.mac_address))
+  const inventoryMacs = new Set(inventory.map((i: InventoryItem) => i.mac_address))
+  const unassignedDevices = detectedDevices.filter((d: BellDevice) => !inventoryMacs.has(d.mac_address))
 
 
   const assignDetectedMutation = useMutation({
-    mutationFn: async ({ device, schoolId }: { device: any, schoolId: string }) => {
+    mutationFn: async ({ device, schoolId }: { device: BellDevice, schoolId: string }) => {
       // 1. Update bell_devices
       const { error: bellError } = await supabase
         .from('bell_devices')
@@ -171,7 +180,7 @@ export default function InventoryManagement() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-purple-100">
-                  {unassignedDevices.map((device: any) => (
+                  {unassignedDevices.map((device) => (
                     <tr key={device.mac_address}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{device.name || 'Unknown'}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{device.mac_address}</td>

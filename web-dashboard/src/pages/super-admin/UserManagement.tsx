@@ -40,7 +40,7 @@ export default function UserManagement() {
         .order('created_at', { ascending: false })
       
       if (error) throw error
-      // @ts-ignore: Supabase types might not reflect the dynamic join perfectly or the email column yet
+      // @ts-expect-error: Supabase types might not reflect the dynamic join perfectly or the email column yet
       return data as UserData[]
     }
   })
