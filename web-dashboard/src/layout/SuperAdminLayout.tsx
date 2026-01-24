@@ -116,6 +116,9 @@ export default function SuperAdminLayout() {
             <LogOut className="mr-3 h-5 w-5 text-gray-400 group-hover:text-gray-500" />
             Sign Out
           </button>
+          <div className="mt-4 px-2 text-xs text-gray-400">
+            v1.1 (Buzzer Test)
+          </div>
         </div>
       </div>
 
