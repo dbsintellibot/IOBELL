@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { School, User, Wifi, HardDrive } from 'lucide-react'
 
@@ -9,28 +9,43 @@ export default function Overview() {
     inventory: 0,
     users: 0
   })
+  const isMounted = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      isMounted.current = false
+    }
+  }, [])
 
   useEffect(() => {
     async function fetchStats() {
-      // Parallel requests
-      const [
-        { count: schoolsCount },
-        { count: devicesCount },
-        { count: inventoryCount },
-        { count: usersCount }
-      ] = await Promise.all([
-        supabase.from('schools').select('*', { count: 'exact', head: true }),
-        supabase.from('bell_devices').select('*', { count: 'exact', head: true }),
-        supabase.from('device_inventory').select('*', { count: 'exact', head: true }),
-        supabase.from('users').select('*', { count: 'exact', head: true })
-      ])
+      try {
+        // Parallel requests
+        const [
+          { count: schoolsCount },
+          { count: devicesCount },
+          { count: inventoryCount },
+          { count: usersCount }
+        ] = await Promise.all([
+          supabase.from('schools').select('*', { count: 'exact', head: true }),
+          supabase.from('bell_devices').select('*', { count: 'exact', head: true }),
+          supabase.from('device_inventory').select('*', { count: 'exact', head: true }),
+          supabase.from('users').select('*', { count: 'exact', head: true })
+        ])
 
-      setStats({
-        schools: schoolsCount || 0,
-        devices: devicesCount || 0,
-        inventory: inventoryCount || 0,
-        users: usersCount || 0
-      })
+        if (isMounted.current) {
+          setStats({
+            schools: schoolsCount || 0,
+            devices: devicesCount || 0,
+            inventory: inventoryCount || 0,
+            users: usersCount || 0
+          })
+        }
+      } catch (error) {
+        if (!isMounted.current) return
+        if (error instanceof Error && error.name === 'AbortError') return
+        console.error('Error fetching stats:', error)
+      }
     }
     fetchStats()
   }, [])

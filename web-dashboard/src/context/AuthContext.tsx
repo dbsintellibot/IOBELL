@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { AuthContext, type AuthRole } from './AuthContextValue'
 import type { Session, User } from '@supabase/supabase-js'
@@ -9,6 +9,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [schoolId, setSchoolId] = useState<string | null>(null)
   const [role, setRole] = useState<AuthRole>(null)
   const [loading, setLoading] = useState(true)
+  const isMounted = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      isMounted.current = false
+    }
+  }, [])
 
   const fetchUserDetails = async (userId: string) => {
     try {
@@ -18,6 +25,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .eq('id', userId)
         .single()
       
+      if (!isMounted.current) return
+
       if (error) {
         console.error('Error fetching user details:', error)
         return
@@ -33,32 +42,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch (error) {
+      if (!isMounted.current) return
       console.error('Unexpected error fetching user details:', error)
     }
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        await fetchUserDetails(session.user.id)
+    const initSession = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+        if (error) throw error
+        
+        if (isMounted.current) {
+          setSession(session)
+          setUser(session?.user ?? null)
+          if (session?.user) {
+            await fetchUserDetails(session.user.id)
+          }
+          if (isMounted.current) setLoading(false)
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return
+        console.error('Error getting session:', error)
+        if (isMounted.current) setLoading(false)
       }
-      setLoading(false)
-    })
+    }
+
+    initSession()
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        await fetchUserDetails(session.user.id)
-      } else {
-        setSchoolId(null)
-        setRole(null)
+      if (isMounted.current) {
+        setSession(session)
+        setUser(session?.user ?? null)
+        if (session?.user) {
+          await fetchUserDetails(session.user.id)
+        } else {
+          setSchoolId(null)
+          setRole(null)
+        }
+        if (isMounted.current) setLoading(false)
       }
-      setLoading(false)
     })
 
     return () => subscription.unsubscribe()
