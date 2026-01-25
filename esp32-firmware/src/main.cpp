@@ -60,6 +60,7 @@ unsigned long lastHeartbeat = 0;
 unsigned long lastProvisionPoll = 0;
 unsigned long buzzerStartTime = 0;
 bool buzzerActive = false;
+bool pendingDFPlayerStart = false; // Flag to delay DFPlayer until buzzer is OFF
 
 enum DeviceState {
     STATE_BOOT,
@@ -230,7 +231,14 @@ void loop() {
     // If buzzer is active, we monitor it exclusively to ensure it turns off on time.
     if (buzzerActive) {
         if (millis() - buzzerStartTime >= 5000) {
-            stopBuzzer();
+            stopBuzzer(); // This sets buzzerActive = false
+            
+            // Start DFPlayer AFTER buzzer stops to reduce peak current
+            if (pendingDFPlayerStart) {
+                 Serial.println("Buzzer Done. Starting DFPlayer...");
+                 myDFPlayer.play(1);
+                 pendingDFPlayerStart = false;
+            }
         } else {
             // Buzzer is still ON. 
             // Do NOT run network tasks or other blocking code.
@@ -369,21 +377,16 @@ void performOTAUpdate(const String& url) {
 }
 
 void playBell() {
-    Serial.println("--- playBell() START ---");
+    Serial.println("--- playBell() START (Sequential) ---");
 
     // 1. Activate Buzzer
     digitalWrite(PIN_BUZZER, HIGH); 
     
     buzzerStartTime = millis();
     buzzerActive = true;
-    Serial.println("Buzzer ON");
-
-    // 2. Activate DFPlayer
-    Serial.println("Sending DFPlayer Command...");
-    myDFPlayer.play(1);
-    Serial.println("DFPlayer Command Sent");
+    pendingDFPlayerStart = true; // Mark that we need to play MP3 after buzzer
     
-    Serial.println("--- playBell() END ---");
+    Serial.println("Buzzer ON. Waiting 5s before DFPlayer...");
 }
 
 void testBuzzer() {
