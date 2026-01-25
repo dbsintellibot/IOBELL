@@ -140,7 +140,7 @@ export default function BellManagement() {
                         disabled={sendCommandMutation.isPending}
                     >
                         <Settings className="h-4 w-4 mr-1" />
-                        Config
+                        Sync Config
                     </button>
                     <button 
                         onClick={() => sendCommandMutation.mutate({ deviceId: device.id, command: 'REBOOT' })}

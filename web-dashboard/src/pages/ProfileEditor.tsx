@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 type BellProfile = {
     id: string
     name: string
+    is_active: boolean
 }
 
 type BellTimeRow = {
@@ -36,6 +37,7 @@ type ProfileEditorBodyProps = {
     setSelectedDay: (day: number) => void
     days: string[]
     queryClient: ReturnType<typeof useQueryClient>
+    schoolId: string | null
 }
 
 export default function ProfileEditor() {
@@ -58,6 +60,16 @@ export default function ProfileEditor() {
         }
     })
     const activeProfileId = selectedProfileId ?? profiles[0]?.id ?? null
+
+    const toggleActiveMutation = useMutation({
+        mutationFn: async (id: string) => {
+            const { error } = await supabase.from('bell_profiles').update({ is_active: true }).eq('id', id)
+            if (error) throw error
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['profiles'] })
+        }
+    })
 
     // Fetch Audio Files for dropdown
     const { data: audioFiles = [] } = useQuery<AudioFileItem[]>({
@@ -161,14 +173,28 @@ export default function ProfileEditor() {
                     {loadingProfiles ? <div className="p-4 text-sm text-gray-500">Loading...</div> : profiles.map(profile => (
                         <div 
                             key={profile.id}
-                            onClick={() => setSelectedProfileId(profile.id)}
                             className={`flex cursor-pointer items-center justify-between rounded-md p-3 text-sm ${
                                 activeProfileId === profile.id 
                                 ? 'bg-blue-50 text-blue-700' 
                                 : 'text-gray-700 hover:bg-gray-50'
                             }`}
+                            onClick={() => setSelectedProfileId(profile.id)}
                         >
-                            <span>{profile.name}</span>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="radio"
+                                    name="activeProfile"
+                                    checked={profile.is_active}
+                                    onChange={(e) => {
+                                        e.stopPropagation()
+                                        toggleActiveMutation.mutate(profile.id)
+                                    }}
+                                    className="h-4 w-4 text-blue-600 cursor-pointer"
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                                <span>{profile.name}</span>
+                                {profile.is_active && <span className="ml-1 text-[10px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">ACTIVE</span>}
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -187,6 +213,7 @@ export default function ProfileEditor() {
                     setSelectedDay={setSelectedDay}
                     days={days}
                     queryClient={queryClient}
+                    schoolId={schoolId}
                 />
             ) : (
                 <div className="flex-1 rounded-lg border bg-white shadow-sm p-6 text-sm text-gray-500">
@@ -205,7 +232,8 @@ function ProfileEditorBody({
     selectedDay,
     setSelectedDay,
     days,
-    queryClient
+    queryClient,
+    schoolId
 }: ProfileEditorBodyProps) {
     const [localSchedule, setLocalSchedule] = useState<ScheduleItem[]>(initialSchedule)
     const [localProfileName, setLocalProfileName] = useState(initialProfileName)
@@ -229,12 +257,29 @@ function ProfileEditorBody({
             
             if (deleteError) throw deleteError
 
-            const itemsToInsert = localSchedule.map(item => ({
-                bell_time: item.bell_time,
-                audio_file_id: item.audio_file_id,
-                day_of_week: [item.day_of_week],
+            // Group items by time + audio to optimize storage (combine days)
+            const grouped = new Map<string, { bell_time: string, audio_file_id: string | null, days: Set<number> }>();
+
+            localSchedule.forEach(item => {
+                // Ensure time format is HH:mm:00 for consistency if needed, but input usually gives HH:mm
+                // Supabase handles HH:mm fine, but let's be safe if we want strictly 1 entry per time.
+                const key = `${item.bell_time}-${item.audio_file_id ?? 'null'}`;
+                if (!grouped.has(key)) {
+                    grouped.set(key, {
+                        bell_time: item.bell_time,
+                        audio_file_id: item.audio_file_id,
+                        days: new Set()
+                    });
+                }
+                grouped.get(key)!.days.add(item.day_of_week);
+            });
+
+            const itemsToInsert = Array.from(grouped.values()).map(g => ({
+                bell_time: g.bell_time,
+                audio_file_id: g.audio_file_id,
+                day_of_week: Array.from(g.days).sort((a, b) => a - b),
                 profile_id: selectedProfileId
-            }))
+            }));
 
             if (itemsToInsert.length > 0) {
                 const { error: insertError } = await supabase
@@ -243,16 +288,43 @@ function ProfileEditorBody({
                 
                 if (insertError) throw insertError
             }
+
+            // Automatically sync with all devices in the school
+            if (schoolId) {
+                const { data: devices } = await supabase
+                    .from('bell_devices')
+                    .select('id')
+                    .eq('school_id', schoolId)
+
+                if (devices && devices.length > 0) {
+                    const commands = devices.map(d => ({
+                        device_id: d.id,
+                        school_id: schoolId,
+                        command: 'CONFIG',
+                        payload: { source: 'profile_save', profile_id: selectedProfileId }
+                    }))
+
+                    const { error: cmdError } = await supabase
+                        .from('command_queue')
+                        .insert(commands)
+
+                    if (cmdError) {
+                        console.error("Failed to queue sync commands:", cmdError)
+                    } else {
+                        console.log(`Queued CONFIG command for ${devices.length} devices.`)
+                    }
+                }
+            }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['schedule', selectedProfileId] })
             queryClient.invalidateQueries({ queryKey: ['profiles'] })
             setIsDirty(false)
-            alert('Profile saved successfully!')
+            alert('Profile saved and devices syncing...')
         },
         onError: (error) => {
             console.error('Save failed:', error)
-            alert('Failed to save profile')
+            alert(`Failed to save profile: ${error.message}`)
         }
     })
 

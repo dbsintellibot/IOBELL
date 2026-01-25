@@ -6,6 +6,8 @@
 #include <ArduinoJson.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include <Wire.h>
+#include <RTClib.h>
 #include "DFRobotDFPlayerMini.h"
 #include <LittleFS.h>
 #include <vector>
@@ -21,12 +23,14 @@ const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 // Pin Definitions
 #define PIN_DFPLAYER_RX 16 // Connect to DFPlayer TX
 #define PIN_DFPLAYER_TX 17 // Connect to DFPlayer RX
-#define PIN_LED_WIFI    2  // Built-in LED (ON = Connected)
-#define PIN_LED_ERROR   4  // Error LED
-#define PIN_BUZZER      13 // Buzzer Pin
+#define PIN_LED_WIFI    25 // WiFi LED (ON = Connected)
+#define PIN_LED_ERROR   26 // Error LED
+#define PIN_BUZZER      27 // Buzzer Pin
+#define PIN_RTC_SDA     21 // RTC SDA
+#define PIN_RTC_SCL     22 // RTC SCL
 
 // Settings
-const long  UTC_OFFSET_SEC = 0; // Adjust timezone here or fetch from API
+const long  UTC_OFFSET_SEC = 18000; // GMT+5 for Pakistan
 const unsigned long SCHEDULE_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const unsigned long COMMAND_POLL_INTERVAL = 5 * 1000;      // 5 seconds
 const unsigned long HEARTBEAT_INTERVAL = 60 * 1000;        // 60 seconds
@@ -37,6 +41,8 @@ const unsigned long PROVISION_POLL_INTERVAL = 10 * 1000;   // 10 seconds
 // ==========================================
 
 WiFiUDP ntpUDP;
+RTC_DS3231 rtc;
+bool rtcFound = false;
 DFRobotDFPlayerMini myDFPlayer;
 HardwareSerial dfPlayerSerial(2); // Use UART2
 NTPClient timeClient(ntpUDP, "pool.ntp.org", UTC_OFFSET_SEC);
@@ -81,6 +87,7 @@ void saveSchedulesToStorage(const String& jsonContent);
 void playBell();
 void testBuzzer();
 void parseSchedules(const String& jsonString);
+void getCurrentTime(int &h, int &m, int &s, int &d);
 void saveConfigCallback();
 void performOTAUpdate(const String& url);
 
@@ -103,6 +110,18 @@ void setup() {
     digitalWrite(PIN_LED_WIFI, LOW);
     digitalWrite(PIN_BUZZER, LOW);
     
+    // Init RTC
+    Wire.begin(PIN_RTC_SDA, PIN_RTC_SCL);
+    if (!rtc.begin()) {
+        Serial.println("Couldn't find RTC");
+    } else {
+        rtcFound = true;
+        Serial.println("RTC Found");
+        if (rtc.lostPower()) {
+            Serial.println("RTC lost power, waiting for NTP sync...");
+        }
+    }
+
     // Init LittleFS
     if(!LittleFS.begin(true)){
         Serial.println("LittleFS Mount Failed");
@@ -183,6 +202,17 @@ void setup() {
     timeClient.setUpdateInterval(86400000); // Sync every 24 hours
     timeClient.begin();
     
+    // Force initial sync to ensure RTC is set
+    if (rtcFound) {
+        Serial.println("Attempting initial NTP sync...");
+        if (timeClient.forceUpdate()) {
+            rtc.adjust(DateTime(timeClient.getEpochTime()));
+            Serial.println("Initial NTP Sync Success -> RTC Set");
+        } else {
+            Serial.println("Initial NTP Sync Failed");
+        }
+    }
+    
     if (currentState == STATE_ACTIVE) {
         syncSchedules();
     }
@@ -194,6 +224,7 @@ void setup() {
 void loop() {
     // Buzzer Logic (Non-blocking)
     if (buzzerActive && (millis() - buzzerStartTime >= 5000)) {
+        noTone(PIN_BUZZER);
         digitalWrite(PIN_BUZZER, LOW);
         buzzerActive = false;
         Serial.println("Buzzer OFF");
@@ -232,23 +263,37 @@ void loop() {
     // --- ACTIVE STATE ---
     digitalWrite(PIN_LED_WIFI, HIGH); // Solid ON
 
-    // 3. Update Time
-    timeClient.update();
+    // 3. Update Time & Sync RTC
+    // If NTP receives a new time packet, update the RTC
+    if (timeClient.update()) {
+        if (rtcFound) {
+            rtc.adjust(DateTime(timeClient.getEpochTime()));
+            Serial.println("NTP Sync -> RTC Adjusted");
+        }
+    }
 
     // 4. Scheduler Logic (Run every second)
     static unsigned long lastTick = 0;
+    static int lastCheckedMinute = -1; // Track the last minute we processed
+
     if (millis() - lastTick >= 1000) {
         lastTick = millis();
         
-        int currentDay = timeClient.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-        int dbDay = (currentDay == 0) ? 7 : currentDay; // 1=Mon, ..., 7=Sun
-        
-        int currentH = timeClient.getHours();
-        int currentM = timeClient.getMinutes();
-        int currentS = timeClient.getSeconds();
+        int currentH, currentM, currentS, currentDay;
+        getCurrentTime(currentH, currentM, currentS, currentDay);
+        int dbDay = currentDay;
 
-        if (currentS == 0) {
-            Serial.printf("Time: %02d:%02d (Day: %d)\n", currentH, currentM, dbDay);
+        // Print time periodically (every 10s) for debugging
+        if (currentS % 10 == 0) {
+             Serial.printf("Current Time: %02d:%02d:%02d (Day: %d)\n", currentH, currentM, currentS, dbDay);
+        }
+
+        // Robust Check: Run only once per minute, but don't rely on currentS == 0
+        if (currentM != lastCheckedMinute) {
+            lastCheckedMinute = currentM;
+            
+            Serial.printf("Checking Schedules for %02d:%02d (Day: %d)...\n", currentH, currentM, dbDay);
+            
             for (const auto& sch : activeSchedules) {
                 if (sch.hour == currentH && sch.minute == currentM) {
                     bool dayMatch = false;
@@ -261,6 +306,9 @@ void loop() {
                     if(dayMatch) {
                         Serial.println("MATCH! Ringing Bell...");
                         playBell();
+                    } else {
+                         // Optional: Log that time matched but day didn't (useful for debug)
+                         // Serial.println("Time matched, but day did not.");
                     }
                 }
             }
@@ -303,19 +351,36 @@ void performOTAUpdate(const String& url) {
 void playBell() {
     myDFPlayer.play(1);
 
-    // Activate Buzzer
-    digitalWrite(PIN_BUZZER, HIGH);
+    // Activate Buzzer with Tone (Works for Passive & Active)
+    tone(PIN_BUZZER, 1000); // 1kHz signal
     buzzerStartTime = millis();
     buzzerActive = true;
-    Serial.println("Buzzer ON");
+    Serial.println("Buzzer ON (Tone 1000Hz)");
 }
 
 void testBuzzer() {
-    // Only Activate Buzzer (No Audio)
-    digitalWrite(PIN_BUZZER, HIGH);
+    // Activate Buzzer with Tone
+    tone(PIN_BUZZER, 1000); // 1kHz signal
     buzzerStartTime = millis();
     buzzerActive = true;
-    Serial.println("Buzzer Test ON");
+    Serial.println("Buzzer Test ON (Tone 1000Hz)");
+}
+
+void getCurrentTime(int &h, int &m, int &s, int &d) {
+    if (rtcFound) {
+        DateTime now = rtc.now();
+        h = now.hour();
+        m = now.minute();
+        s = now.second();
+        d = now.dayOfTheWeek(); // 0=Sun, 1=Mon, etc.
+    } else {
+        // Fallback to NTP if RTC not present
+        timeClient.update();
+        h = timeClient.getHours();
+        m = timeClient.getMinutes();
+        s = timeClient.getSeconds();
+        d = timeClient.getDay();
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -360,22 +425,24 @@ void fetchDeviceDetails() {
             String status = doc[0]["status"].as<String>();
             
             // Handle server messages (e.g. warnings about invalid code)
+            bool forceUnassigned = false;
             if (doc[0].containsKey("message")) {
                 String msg = doc[0]["message"].as<String>();
                 if (msg != "OK") {
                     Serial.println("Server Message: " + msg);
                     // If invalid code was sent, clear it from preferences
-                    if (msg.indexOf("Invalid School Code") >= 0) {
+                    if (msg.indexOf("Invalid School Code") >= 0 || msg.indexOf("Unassigned") >= 0) {
                         Serial.println("Clearing invalid School ID/Code from preferences.");
                         preferences.putString("school_id", "");
                         strcpy(schoolId, "");
+                        forceUnassigned = true;
                     }
                 }
             }
 
             // Check assignment
             bool isAssigned = false;
-            if (doc[0]["school_id"].is<String>()) {
+            if (!forceUnassigned && doc[0]["school_id"].is<String>()) {
                 String sId = doc[0]["school_id"].as<String>();
                 if (sId.length() > 0) {
                     sId.toCharArray(schoolId, 40);
@@ -411,63 +478,41 @@ void fetchDeviceDetails() {
 void syncSchedules() {
     if (WiFi.status() != WL_CONNECTED || currentState != STATE_ACTIVE) return;
     
-    // 1. Get Profile
-    String profileId = "";
-    {
-        HTTPClient http;
-        // Use RPC to resolve profile for the assigned school
-        // Or query bell_profiles directly since we have schoolId (UUID)
-        
-        String url = String(SUPABASE_URL) + "/rest/v1/bell_profiles?select=id&school_id=eq." + String(schoolId) + "&limit=1";
-        http.begin(url);
-        http.addHeader("apikey", SUPABASE_KEY);
-        http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-        
-        if (http.GET() == 200) {
-             JsonDocument doc;
-             deserializeJson(doc, http.getString());
-             if (doc.size() > 0) profileId = doc[0]["id"].as<String>();
-        }
-        http.end();
-    }
+    Serial.println("Syncing Schedules via get_device_config...");
     
-    if (profileId == "") {
-        Serial.println("No profile found for school");
-        return;
-    }
-
-    // 2. Get Times
     HTTPClient http;
-    String url = String(SUPABASE_URL) + "/rest/v1/bell_times?select=bell_time,day_of_week&profile_id=eq." + profileId;
+    String url = String(SUPABASE_URL) + "/rest/v1/rpc/get_device_config";
     
     http.begin(url);
     http.addHeader("apikey", SUPABASE_KEY);
     http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    http.addHeader("Content-Type", "application/json");
     
-    int code = http.GET();
+    String body = "{\"device_mac\": \"" + deviceMacAddress + "\"}";
+    
+    int code = http.POST(body);
+    
     if (code == 200) {
         String resp = http.getString();
         
-        JsonDocument dbDoc;
-        DeserializationError error = deserializeJson(dbDoc, resp);
+        // Basic validation
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, resp);
         
-        if (!error) {
-            JsonDocument localDoc;
-            JsonArray schedules = localDoc["schedules"].to<JsonArray>();
-            
-            for (JsonObject item : dbDoc.as<JsonArray>()) {
-                JsonObject newSch = schedules.add<JsonObject>();
-                newSch["bell_time"] = item["bell_time"];
-                newSch["days_of_week"] = item["day_of_week"];
-            }
-            
-            String finalJson;
-            serializeJson(localDoc, finalJson);
-            
-            Serial.println("Sync Response: " + finalJson);
-            saveSchedulesToStorage(finalJson);
-            parseSchedules(finalJson);
+        if (!error && doc.containsKey("schedules")) {
+             Serial.println("Sync Success. Saving...");
+             saveSchedulesToStorage(resp);
+             parseSchedules(resp);
+             digitalWrite(PIN_LED_ERROR, LOW);
+        } else {
+             Serial.println("Invalid Config Response");
+             digitalWrite(PIN_LED_ERROR, HIGH);
         }
+    } else {
+        Serial.print("Sync Config Failed: ");
+        Serial.println(code);
+        Serial.println(http.getString());
+        digitalWrite(PIN_LED_ERROR, HIGH);
     }
     http.end();
 }
@@ -475,60 +520,118 @@ void syncSchedules() {
 void pollCommands() {
     if (WiFi.status() != WL_CONNECTED || currentState != STATE_ACTIVE) return;
     
+    Serial.println("Polling for commands...");
+
     HTTPClient http;
-    String url = String(SUPABASE_URL) + "/rest/v1/command_queue?select=id,command,payload&status=eq.pending&device_id=eq." + deviceDbId + "&limit=1&order=created_at.asc";
+    // Use RPC to bypass RLS
+    String url = String(SUPABASE_URL) + "/rest/v1/rpc/get_next_command";
     
     http.begin(url);
     http.addHeader("apikey", SUPABASE_KEY);
     http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    http.addHeader("Content-Type", "application/json");
     
-    int code = http.GET();
+    String body = "{\"p_device_id\": \"" + deviceDbId + "\"}";
+    
+    int code = http.POST(body);
+
     if (code == 200) {
         String resp = http.getString();
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, resp);
+
+        if (error) {
+            Serial.print("Command JSON Parse Error: ");
+            Serial.println(error.c_str());
+            digitalWrite(PIN_LED_ERROR, HIGH);
+            http.end();
+            return;
+        }
+
+        // Handle both single object and array
+        JsonVariant cmdData = doc.as<JsonVariant>();
+        if (cmdData.is<JsonArray>()) {
+            if (cmdData.size() == 0) {
+                // This is normal, no commands pending
+                http.end();
+                return;
+            }
+            // If it's an array, process the first element
+            cmdData = cmdData[0];
+        }
         
-        if (!error && doc.size() > 0) {
-            JsonObject cmdObj = doc[0];
+        if (cmdData.is<JsonObject>()) {
+            JsonObject cmdObj = cmdData.as<JsonObject>();
             String cmdId = cmdObj["id"].as<String>();
             const char* cmd = cmdObj["command"];
             
-            Serial.print("Received Command: ");
-            Serial.println(cmd);
+            if (!cmd) {
+                Serial.println("Received command object without 'command' field.");
+                digitalWrite(PIN_LED_ERROR, HIGH);
+                http.end();
+                return;
+            }
+            
+            Serial.print("*** COMMAND RECEIVED: ");
+            Serial.print(cmd);
+            Serial.println(" ***");
             
             // Execute
             bool executed = false;
             if (strcmp(cmd, "RING") == 0) {
+                Serial.println("Executing command: RING");
                 playBell();
                 executed = true;
             } else if (strcmp(cmd, "TEST_BUZZER") == 0) {
+                Serial.println("Executing command: TEST_BUZZER");
                 testBuzzer();
                 executed = true;
             } else if (strcmp(cmd, "SYNC_TIME") == 0) {
+                Serial.println("Executing command: SYNC_TIME");
                 timeClient.forceUpdate();
+                Serial.println("Time Synced via Command");
+                executed = true;
+            } else if (strcmp(cmd, "CONFIG") == 0) {
+                Serial.println("Config Command Received. Refreshing details...");
+                fetchDeviceDetails();
+                syncSchedules();
                 executed = true;
             } else if (strcmp(cmd, "REBOOT") == 0) {
+                Serial.println("Reboot Command Received. Restarting in 1s...");
                 executed = true; 
             } else if (strcmp(cmd, "UPDATE_FIRMWARE") == 0) {
+                Serial.println("Firmware Update Command Received.");
                 executed = true;
             }
             
             // Ack
             if (executed) {
-                HTTPClient ackHttp;
-                String ackUrl = String(SUPABASE_URL) + "/rest/v1/command_queue?id=eq." + cmdId;
-                ackHttp.begin(ackUrl);
-                ackHttp.addHeader("Content-Type", "application/json");
-                ackHttp.addHeader("apikey", SUPABASE_KEY);
-                ackHttp.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-                
-                String patchBody = "{\"status\": \"executed\"}";
-                int ackCode = ackHttp.sendRequest("PATCH", patchBody);
-                ackHttp.end();
-                Serial.printf("Ack sent: %d\n", ackCode);
+                if (cmdId.length() == 0) {
+                     Serial.println("Warning: No Command ID, skipping Ack.");
+                } else {
+                    HTTPClient ackHttp;
+                    // Use RPC to bypass RLS for Ack
+                    String ackUrl = String(SUPABASE_URL) + "/rest/v1/rpc/ack_command";
+                    ackHttp.begin(ackUrl);
+                    ackHttp.addHeader("Content-Type", "application/json");
+                    ackHttp.addHeader("apikey", SUPABASE_KEY);
+                    ackHttp.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+                    
+                    String patchBody = "{\"p_command_id\": " + cmdId + "}";
+                    int ackCode = ackHttp.POST(patchBody);
+                    ackHttp.end();
+                    
+                    if (ackCode == 200 || ackCode == 204) {
+                         Serial.printf("Command Acknowledged (ID: %s, Status: %d)\n", cmdId.c_str(), ackCode);
+                         digitalWrite(PIN_LED_ERROR, LOW);
+                    } else {
+                         Serial.printf("Ack Failed (ID: %s, Status: %d)\n", cmdId.c_str(), ackCode);
+                         digitalWrite(PIN_LED_ERROR, HIGH);
+                    }
+                }
                 
                 if (strcmp(cmd, "REBOOT") == 0) {
-                    delay(500);
+                    delay(1000);
                     ESP.restart();
                 }
                 if (strcmp(cmd, "UPDATE_FIRMWARE") == 0) {
@@ -537,6 +640,11 @@ void pollCommands() {
                 }
             }
         }
+    } else {
+        Serial.print("Poll Failed. Code: ");
+        Serial.println(code);
+        if (code != 200) Serial.println(http.getString());
+        digitalWrite(PIN_LED_ERROR, HIGH);
     }
     http.end();
 }
@@ -560,10 +668,12 @@ void sendHeartbeat() {
     
     if (code == 200 || code == 204) {
         Serial.println("Heartbeat sent successfully (RPC)");
+        digitalWrite(PIN_LED_ERROR, LOW);
     } else {
         Serial.print("Heartbeat failed: ");
         Serial.println(code);
         Serial.println(http.getString());
+        digitalWrite(PIN_LED_ERROR, HIGH);
     }
     http.end();
 }
@@ -619,14 +729,21 @@ void parseSchedules(const String& jsonString) {
         
         ScheduleItem item;
         int h, m, s;
-        sscanf(timeStr, "%d:%d:%d", &h, &m, &s);
+        // Robust parsing: Initialize s to 0 in case it's missing
+        s = 0; 
+        int parsed = sscanf(timeStr, "%d:%d:%d", &h, &m, &s);
+        
         item.hour = h;
         item.minute = m;
         
         JsonArray days = obj["days_of_week"];
+        Serial.printf("  + Schedule: %02d:%02d (Parsed %d items) Days: ", h, m, parsed);
         for(int d : days) {
             item.days.push_back(d);
+            Serial.print(d);
+            Serial.print(" ");
         }
+        Serial.println();
         
         activeSchedules.push_back(item);
     }

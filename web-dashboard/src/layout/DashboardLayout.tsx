@@ -4,12 +4,22 @@ import { Bell, Calendar, Home, Mic, LogOut, AlertTriangle, Wifi, Menu, X } from 
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useQuery } from '@tanstack/react-query'
 
 export default function DashboardLayout() {
   const { signOut, schoolId } = useAuth()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [emergencyPending, setEmergencyPending] = useState(false)
+
+  const { data: schoolName } = useQuery({
+    queryKey: ['school_name', schoolId],
+    enabled: !!schoolId,
+    queryFn: async () => {
+      const { data } = await supabase.from('schools').select('name').eq('id', schoolId).single()
+      return data?.name
+    }
+  })
 
   const navigation = [
     { name: 'Overview', href: '/dashboard', icon: Home },
@@ -180,7 +190,7 @@ export default function DashboardLayout() {
                     <Menu className="h-6 w-6" />
                 </button>
                 <h1 className="text-lg font-semibold text-gray-800">
-                    {navigation.find(n => isActive(n.href))?.name || 'Dashboard'}
+                    {schoolName ? `${schoolName} - ` : ''}{navigation.find(n => isActive(n.href))?.name || 'Dashboard'}
                 </h1>
             </div>
             <button 

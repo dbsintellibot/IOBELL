@@ -15,9 +15,17 @@ async function fixSchemaAndPolicy() {
     console.log('Adding school_id column to command_queue...');
     await client.query(`
       ALTER TABLE command_queue 
-      ADD COLUMN IF NOT EXISTS school_id UUID; -- REFERENCES schools(id) is good practice but let's stick to simple first or check if schools exists
+      ADD COLUMN IF NOT EXISTS school_id UUID;
     `);
-    console.log('Column added (if not existed).');
+    console.log('Column school_id added (if not existed).');
+
+    // 1.5 Add executed_at column if not exists
+    console.log('Adding executed_at column to command_queue...');
+    await client.query(`
+      ALTER TABLE command_queue 
+      ADD COLUMN IF NOT EXISTS executed_at TIMESTAMP WITH TIME ZONE;
+    `);
+    console.log('Column executed_at added (if not existed).');
 
     // 2. Add RLS Policy
     // We drop existing policy if we want to replace, or just create a new one.
