@@ -222,15 +222,26 @@ void setup() {
 // LOOP
 // ==========================================
 void loop() {
-    // Buzzer Logic (Non-blocking)
-    if (buzzerActive && (millis() - buzzerStartTime >= 5000)) {
-        noTone(PIN_BUZZER);
-        digitalWrite(PIN_BUZZER, LOW);
-        buzzerActive = false;
-        Serial.println("Buzzer OFF");
+    // 1. Buzzer Logic (Highest Priority)
+    // If buzzer is active, we monitor it exclusively to ensure it turns off on time.
+    // We SKIP all other tasks (Network, Schedule Checks) to prevent blocking operations
+    // from keeping the buzzer on indefinitely.
+    if (buzzerActive) {
+        if (millis() - buzzerStartTime >= 5000) {
+            noTone(PIN_BUZZER);
+            digitalWrite(PIN_BUZZER, LOW);
+            buzzerActive = false;
+            Serial.println("Buzzer OFF");
+        } else {
+            // Buzzer is still ON. 
+            // Do NOT run network tasks or other blocking code.
+            // Just wait a bit and return to loop start.
+            delay(100); 
+            return; 
+        }
     }
 
-    // 1. WiFi Management
+    // 2. WiFi Management
     if (WiFi.status() != WL_CONNECTED) {
         digitalWrite(PIN_LED_WIFI, LOW);
         Serial.println("WiFi lost, reconnecting...");
