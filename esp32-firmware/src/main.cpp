@@ -85,18 +85,22 @@ void sendHeartbeat();
 void loadSchedulesFromStorage();
 void saveSchedulesToStorage(const String& jsonContent);
 void playBell();
+void stopBuzzer(); // Helper to force stop
 void testBuzzer();
 void parseSchedules(const String& jsonString);
 void getCurrentTime(int &h, int &m, int &s, int &d);
 void saveConfigCallback();
 void performOTAUpdate(const String& url);
+bool hasRungThisMinute(int d, int h, int m); // Persistence check
+void markRung(int d, int h, int m); // Save ring state
 
 // ==========================================
 // SETUP
 // ==========================================
 void setup() {
     Serial.begin(115200);
-    
+    Serial.println("\n\n--- AUTO-BELL BOOT ---");
+
     // Load Custom Params from Preferences
     preferences.begin("autobell", false);
     String storedName = preferences.getString("dev_name", "AutoBell Device");
@@ -108,7 +112,7 @@ void setup() {
     pinMode(PIN_LED_ERROR, OUTPUT);
     pinMode(PIN_BUZZER, OUTPUT);
     digitalWrite(PIN_LED_WIFI, LOW);
-    digitalWrite(PIN_BUZZER, LOW);
+    stopBuzzer(); // Ensure buzzer is OFF at boot
     
     // Init RTC
     Wire.begin(PIN_RTC_SDA, PIN_RTC_SCL);
@@ -224,14 +228,9 @@ void setup() {
 void loop() {
     // 1. Buzzer Logic (Highest Priority)
     // If buzzer is active, we monitor it exclusively to ensure it turns off on time.
-    // We SKIP all other tasks (Network, Schedule Checks) to prevent blocking operations
-    // from keeping the buzzer on indefinitely.
     if (buzzerActive) {
         if (millis() - buzzerStartTime >= 5000) {
-            noTone(PIN_BUZZER);
-            digitalWrite(PIN_BUZZER, LOW);
-            buzzerActive = false;
-            Serial.println("Buzzer OFF");
+            stopBuzzer();
         } else {
             // Buzzer is still ON. 
             // Do NOT run network tasks or other blocking code.
@@ -299,7 +298,7 @@ void loop() {
              Serial.printf("Current Time: %02d:%02d:%02d (Day: %d)\n", currentH, currentM, currentS, dbDay);
         }
 
-        // Robust Check: Run only once per minute, but don't rely on currentS == 0
+        // Robust Check: Run only once per minute
         if (currentM != lastCheckedMinute) {
             lastCheckedMinute = currentM;
             
@@ -307,6 +306,13 @@ void loop() {
             
             for (const auto& sch : activeSchedules) {
                 if (sch.hour == currentH && sch.minute == currentM) {
+                    
+                    // Check Persistence FIRST to prevent loops/reboots from re-triggering
+                    if (hasRungThisMinute(dbDay, currentH, currentM)) {
+                        Serial.println("Skipping: Already rung for this time (Persistent Check).");
+                        continue;
+                    }
+
                     bool dayMatch = false;
                     Serial.printf("Time Match (%02d:%02d). Checking Days: ", sch.hour, sch.minute);
                     for(int d : sch.days) {
@@ -320,6 +326,7 @@ void loop() {
                     if(dayMatch) {
                         Serial.println("MATCH! Ringing Bell...");
                         playBell();
+                        markRung(dbDay, currentH, currentM);
                     } else {
                          Serial.printf("Time matched, but day did not. Today is Day %d\n", dbDay);
                     }
@@ -364,15 +371,12 @@ void performOTAUpdate(const String& url) {
 void playBell() {
     Serial.println("--- playBell() START ---");
 
-    // 1. Activate Buzzer (First, to ensure it rings even if DFPlayer fails)
-    // Use digitalWrite instead of tone() for better compatibility with Relays and Active Buzzers
-    // If you have a passive buzzer, you might need to revert to tone(PIN_BUZZER, 1000);
+    // 1. Activate Buzzer
     digitalWrite(PIN_BUZZER, HIGH); 
-    // tone(PIN_BUZZER, 1000); // Uncomment for passive buzzer
     
     buzzerStartTime = millis();
     buzzerActive = true;
-    Serial.println("Buzzer ON (digitalWrite HIGH)");
+    Serial.println("Buzzer ON");
 
     // 2. Activate DFPlayer
     Serial.println("Sending DFPlayer Command...");
@@ -495,12 +499,42 @@ void fetchDeviceDetails() {
             currentState = STATE_UNASSIGNED;
         }
     } else {
-        Serial.print("Registration Error: ");
+       Serial.print("Registration Error: ");
         Serial.println(code);
         Serial.println(http.getString());
-        // Keep current state (don't reset to Boot)
     }
     http.end();
+}
+
+void stopBuzzer() {
+    digitalWrite(PIN_BUZZER, LOW);
+    buzzerActive = false;
+    Serial.println("Buzzer Stopped (Force)");
+}
+
+// Key format: "d-h-m" e.g., "1-14-30"
+bool hasRungThisMinute(int d, int h, int m) {
+    char key[20];
+    sprintf(key, "lr_%d_%d_%d", d, h, m);
+    // Check if this key exists and is true
+    // Actually, we can just store the LAST rung key
+    // But saving a boolean for every minute is too much.
+    // Better: Store "last_ring_key" string.
+    
+    String lastKey = preferences.getString("last_ring", "");
+    String currentKey = String(key);
+    
+    if (lastKey == currentKey) {
+        return true;
+    }
+    return false;
+}
+
+void markRung(int d, int h, int m) {
+    char key[20];
+    sprintf(key, "lr_%d_%d_%d", d, h, m);
+    preferences.putString("last_ring", String(key));
+    Serial.println("Marked as Rung: " + String(key));
 }
 
 void syncSchedules() {
