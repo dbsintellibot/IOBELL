@@ -297,18 +297,20 @@ void loop() {
             for (const auto& sch : activeSchedules) {
                 if (sch.hour == currentH && sch.minute == currentM) {
                     bool dayMatch = false;
+                    Serial.printf("Time Match (%02d:%02d). Checking Days: ", sch.hour, sch.minute);
                     for(int d : sch.days) {
+                        Serial.printf("%d ", d);
                         if(d == dbDay) {
                             dayMatch = true;
-                            break;
                         }
                     }
+                    Serial.println();
+                    
                     if(dayMatch) {
                         Serial.println("MATCH! Ringing Bell...");
                         playBell();
                     } else {
-                         // Optional: Log that time matched but day didn't (useful for debug)
-                         // Serial.println("Time matched, but day did not.");
+                         Serial.printf("Time matched, but day did not. Today is Day %d\n", dbDay);
                     }
                 }
             }
