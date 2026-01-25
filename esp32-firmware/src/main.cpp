@@ -351,21 +351,36 @@ void performOTAUpdate(const String& url) {
 }
 
 void playBell() {
-    myDFPlayer.play(1);
+    Serial.println("--- playBell() START ---");
 
-    // Activate Buzzer with Tone (Works for Passive & Active)
-    tone(PIN_BUZZER, 1000); // 1kHz signal
+    // 1. Activate Buzzer (First, to ensure it rings even if DFPlayer fails)
+    // Use digitalWrite instead of tone() for better compatibility with Relays and Active Buzzers
+    // If you have a passive buzzer, you might need to revert to tone(PIN_BUZZER, 1000);
+    digitalWrite(PIN_BUZZER, HIGH); 
+    // tone(PIN_BUZZER, 1000); // Uncomment for passive buzzer
+    
     buzzerStartTime = millis();
     buzzerActive = true;
-    Serial.println("Buzzer ON (Tone 1000Hz)");
+    Serial.println("Buzzer ON (digitalWrite HIGH)");
+
+    // 2. Activate DFPlayer
+    Serial.println("Sending DFPlayer Command...");
+    myDFPlayer.play(1);
+    Serial.println("DFPlayer Command Sent");
+    
+    Serial.println("--- playBell() END ---");
 }
 
 void testBuzzer() {
-    // Activate Buzzer with Tone
-    tone(PIN_BUZZER, 1000); // 1kHz signal
+    Serial.println("--- testBuzzer() START ---");
+    // Activate Buzzer
+    digitalWrite(PIN_BUZZER, HIGH);
+    // tone(PIN_BUZZER, 1000);
+    
     buzzerStartTime = millis();
     buzzerActive = true;
-    Serial.println("Buzzer Test ON (Tone 1000Hz)");
+    Serial.println("Buzzer Test ON (digitalWrite HIGH)");
+    Serial.println("--- testBuzzer() END ---");
 }
 
 void getCurrentTime(int &h, int &m, int &s, int &d) {
