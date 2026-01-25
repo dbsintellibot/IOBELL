@@ -121,7 +121,7 @@ export default function ProfileEditor() {
         if (data?.id) {
             setSelectedProfileId(data.id)
             queryClient.setQueryData<BellProfile[]>(['profiles'], (current) => {
-                const next = [...(current ?? []), { id: data.id, name }]
+                const next = [...(current ?? []), { id: data.id, name, is_active: false }]
                 return next.sort((a, b) => a.name.localeCompare(b.name))
             })
         }
