@@ -1,26 +1,32 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Save, Clock, Music, Calendar, X, Trash2 } from 'lucide-react-native';
+import { Plus, Clock, Music, X, Trash2 } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
+import TimeFormat from '../utils/timeFormat';
 
 type AudioFileItem = {
   id: string;
   name: string;
+  track_number: number | null;
 };
 
 type ScheduleItem = {
   id: string;
   bell_time: string;
   audio_file_id: string | null;
+  audio_file_id_2: string | null;
+  delay_seconds: number;
   day_of_week: number;
 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export default function ProfileEditorScreen() {
+  const { schoolId } = useAuth();
   const route = useRoute<any>();
   const navigation = useNavigation();
   const { profileId, profileName } = route.params;
@@ -37,28 +43,26 @@ export default function ProfileEditorScreen() {
   const [editingItem, setEditingItem] = useState<ScheduleItem | null>(null);
   const [tempTime, setTempTime] = useState(new Date());
   const [tempAudioId, setTempAudioId] = useState<string | null>(null);
+  const [tempAudioId2, setTempAudioId2] = useState<string | null>(null);
+  const [tempDelay, setTempDelay] = useState<number>(0);
   const [tempDays, setTempDays] = useState<number[]>([]);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
-  useEffect(() => {
-    fetchData();
-  }, [profileId]);
-
-  const fetchData = async () => {
+  const fetchData = React.useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch Audio Files
       const { data: audioData } = await supabase
         .from('audio_files')
-        .select('id, name')
+        .select('id, name, track_number')
+        .order('track_number', { ascending: true })
         .order('name');
       
-      setAudioFiles(audioData as AudioFileItem[] || []);
+      setAudioFiles((audioData as AudioFileItem[]) || []);
 
       // Fetch Schedule
       const { data: scheduleData } = await supabase
         .from('bell_times')
-        .select('id, bell_time, day_of_week, audio_file_id')
+        .select('id, bell_time, day_of_week, audio_file_id, audio_file_id_2, delay_seconds')
         .eq('profile_id', profileId);
 
       const items: ScheduleItem[] = [];
@@ -67,9 +71,12 @@ export default function ProfileEditorScreen() {
         days.forEach((day: number) => {
             items.push({
                 id: `${row.id}-${day}`, // Generate unique ID for frontend
-                bell_time: row.bell_time,
+                bell_time: TimeFormat.to12Hour(row.bell_time),
                 audio_file_id: row.audio_file_id,
-                day_of_week: day
+                audio_file_id_2: row.audio_file_id_2,
+                delay_seconds: row.delay_seconds || 0,
+                // DB (7=Sun) -> UI (0=Sun)
+                day_of_week: day === 7 ? 0 : day
             });
         });
       });
@@ -82,9 +89,15 @@ export default function ProfileEditorScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [profileId]);
 
-  const handleSaveProfile = async () => {
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Time format functions replaced with unified TimeFormat utility
+
+  const handleSaveProfile = React.useCallback(async () => {
     setSaving(true);
     try {
       // 1. Delete existing times
@@ -96,25 +109,13 @@ export default function ProfileEditorScreen() {
       if (deleteError) throw deleteError;
 
       // 2. Insert new times
-      // Group by unique time+audio+days to optimize (optional, but good practice)
-      // For now, simple insert per item is fine but `bell_times` usually expects `day_of_week` array if we want to be efficient.
-      // However, the web app sends individual items? No, web app logic:
-      // const itemsToInsert = localSchedule.map(...) where day_of_week is [item.day_of_week]
-      // Wait, web app logic:
-      /*
-        const itemsToInsert = localSchedule.map(item => ({
-            bell_time: item.bell_time,
-            audio_file_id: item.audio_file_id,
-            day_of_week: [item.day_of_week],
-            profile_id: selectedProfileId
-        }))
-      */
-      // So it inserts one row per day-time combination. That's fine.
-
       const itemsToInsert = schedule.map(item => ({
-        bell_time: item.bell_time.slice(0, 5), // Ensure HH:MM format
+        bell_time: TimeFormat.to24Hour(item.bell_time),
         audio_file_id: item.audio_file_id,
-        day_of_week: [item.day_of_week],
+        audio_file_id_2: item.audio_file_id_2,
+        delay_seconds: item.delay_seconds,
+        // UI (0=Sun) -> DB (7=Sun)
+        day_of_week: [item.day_of_week === 0 ? 7 : item.day_of_week],
         profile_id: profileId
       }));
 
@@ -126,6 +127,24 @@ export default function ProfileEditorScreen() {
         if (insertError) throw insertError;
       }
 
+      // 3. Trigger ESP32 Sync via Command Queue
+      if (schoolId) {
+        const { data: devices } = await supabase
+          .from('bell_devices')
+          .select('id')
+          .eq('school_id', schoolId);
+
+        if (devices && devices.length > 0) {
+          const commands = devices.map(d => ({
+            device_id: d.id,
+            school_id: schoolId,
+            command: 'CONFIG',
+            payload: { source: 'profile_save' }
+          }));
+          await supabase.from('command_queue').insert(commands);
+        }
+      }
+
       setIsDirty(false);
       Alert.alert('Success', 'Profile saved successfully');
     } catch (error) {
@@ -134,7 +153,7 @@ export default function ProfileEditorScreen() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [schedule, profileId, schoolId]);
 
   const openAddModal = () => {
     setEditingItem(null);
@@ -143,36 +162,27 @@ export default function ProfileEditorScreen() {
     now.setMilliseconds(0);
     setTempTime(now);
     setTempAudioId(audioFiles[0]?.id || null);
+    setTempAudioId2(null);
+    setTempDelay(0);
     setTempDays([selectedDay]);
     setModalVisible(true);
   };
 
   const openEditModal = (item: ScheduleItem) => {
     setEditingItem(item);
-    const [hours, minutes] = item.bell_time.split(':').map(Number);
-    const date = new Date();
-    date.setHours(hours);
-    date.setMinutes(minutes);
-    date.setSeconds(0);
+    const date = TimeFormat.parseToDate(item.bell_time);
     setTempTime(date);
     setTempAudioId(item.audio_file_id);
-    setTempDays([item.day_of_week]); // Editing usually is for a single instance in this view
+    setTempAudioId2(item.audio_file_id_2);
+    setTempDelay(item.delay_seconds);
+    setTempDays([item.day_of_week]);
     setModalVisible(true);
   };
 
   const handleSaveItem = () => {
-    const timeStr = tempTime.toTimeString().slice(0, 5); // HH:MM
+    const timeStr = TimeFormat.formatFromDate(tempTime);
     
     if (editingItem) {
-      // Update existing item
-      // Note: In "expanded" view, we are editing a specific day's instance.
-      // If user selected multiple days in edit, we might be creating new items or moving it.
-      // Simplify: Edit affects only the specific item(s) being edited.
-      // Actually, for "Edit", allowing day change is tricky in this UI.
-      // Let's assume Edit only changes Time and Audio.
-      // If they want to change Day, they delete and add new? 
-      // Or we allow changing days, which means removing old item and adding new ones.
-      
       const newItems = schedule.filter(i => i.id !== editingItem.id);
       
       tempDays.forEach(day => {
@@ -180,19 +190,22 @@ export default function ProfileEditorScreen() {
           id: `temp-${Date.now()}-${day}`,
           bell_time: timeStr,
           audio_file_id: tempAudioId,
+          audio_file_id_2: tempAudioId2,
+          delay_seconds: tempDelay,
           day_of_week: day
         });
       });
       
       setSchedule(newItems);
     } else {
-      // Add new items for all selected days
       const newItems = [...schedule];
       tempDays.forEach(day => {
         newItems.push({
           id: `new-${Date.now()}-${day}`,
           bell_time: timeStr,
           audio_file_id: tempAudioId,
+          audio_file_id_2: tempAudioId2,
+          delay_seconds: tempDelay,
           day_of_week: day
         });
       });
@@ -221,11 +234,25 @@ export default function ProfileEditorScreen() {
   const currentDaySchedule = useMemo(() => {
     return schedule
         .filter(item => item.day_of_week === selectedDay)
-        .sort((a, b) => a.bell_time.localeCompare(b.bell_time));
+        .sort((a, b) => {
+            const dateA = TimeFormat.parseToDate(a.bell_time);
+            const dateB = TimeFormat.parseToDate(b.bell_time);
+            return dateA.getTime() - dateB.getTime();
+        });
   }, [schedule, selectedDay]);
 
   const renderScheduleItem = ({ item }: { item: ScheduleItem }) => {
-    const audioName = audioFiles.find(f => f.id === item.audio_file_id)?.name || 'Default';
+    const audio1 = audioFiles.find(f => f.id === item.audio_file_id);
+    const audio2 = item.audio_file_id_2 ? audioFiles.find(f => f.id === item.audio_file_id_2) : null;
+    
+    const getLabel = (file: AudioFileItem | undefined) => {
+        if (!file) return 'Default';
+        return file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name;
+    };
+
+    const audioName = getLabel(audio1);
+    const audioName2 = audio2 ? getLabel(audio2) : null;
+
     return (
       <TouchableOpacity 
         style={styles.itemCard}
@@ -234,11 +261,14 @@ export default function ProfileEditorScreen() {
         <View style={styles.itemInfo}>
           <View style={styles.timeContainer}>
             <Clock size={16} color="#4B5563" />
-            <Text style={styles.timeText}>{item.bell_time.slice(0, 5)}</Text>
+            <Text style={styles.timeText}>{item.bell_time}</Text>
           </View>
           <View style={styles.audioContainer}>
             <Music size={14} color="#6B7280" />
-            <Text style={styles.audioText} numberOfLines={1}>{audioName}</Text>
+            <Text style={styles.audioText} numberOfLines={1}>
+                {audioName}
+                {audioName2 ? ` + ${audioName2} (${item.delay_seconds}s)` : ''}
+            </Text>
           </View>
         </View>
         <TouchableOpacity 
@@ -264,7 +294,7 @@ export default function ProfileEditorScreen() {
         </TouchableOpacity>
       ),
     });
-  }, [navigation, isDirty, saving, profileName, schedule]);
+  }, [navigation, isDirty, saving, profileName, schedule, handleSaveProfile]);
 
   return (
     <View style={styles.container}>
@@ -340,7 +370,7 @@ export default function ProfileEditorScreen() {
                     onPress={() => setShowTimePicker(true)}
                   >
                     <Text style={styles.timeButtonText}>
-                      {tempTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                      {tempTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
                     </Text>
                   </TouchableOpacity>
                 ) : (
@@ -356,7 +386,7 @@ export default function ProfileEditorScreen() {
                     value={tempTime}
                     mode="time"
                     display="default"
-                    is24Hour={true}
+                    is24Hour={false}
                     onChange={(e, date) => {
                       setShowTimePicker(false);
                       if (date) setTempTime(date);
@@ -365,9 +395,28 @@ export default function ProfileEditorScreen() {
                 )}
               </View>
 
-              {/* Audio Picker */}
+              {/* Seconds Selection */}
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Audio File</Text>
+                <Text style={styles.label}>Seconds</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={tempTime.getSeconds()}
+                    onValueChange={(val) => {
+                        const newTime = new Date(tempTime);
+                        newTime.setSeconds(val);
+                        setTempTime(newTime);
+                    }}
+                  >
+                    {Array.from({length: 60}, (_, i) => i).map(sec => (
+                        <Picker.Item key={sec} label={`${sec < 10 ? '0' + sec : sec} seconds`} value={sec} />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+
+              {/* Audio Picker 1 */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Audio File 1</Text>
                 <View style={styles.pickerContainer}>
                   <Picker
                     selectedValue={tempAudioId}
@@ -375,7 +424,48 @@ export default function ProfileEditorScreen() {
                   >
                     <Picker.Item label="Select audio..." value={null} />
                     {audioFiles.map(file => (
-                      <Picker.Item key={file.id} label={file.name} value={file.id} />
+                      <Picker.Item
+                        key={file.id}
+                        label={file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name}
+                        value={file.id}
+                      />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+
+              {/* Delay Picker */}
+              {tempAudioId2 && (
+                <View style={styles.formGroup}>
+                    <Text style={styles.label}>Delay (Seconds)</Text>
+                    <View style={styles.pickerContainer}>
+                        <Picker
+                            selectedValue={tempDelay}
+                            onValueChange={(val) => setTempDelay(val)}
+                        >
+                            {Array.from({length: 31}, (_, i) => i).map(sec => (
+                                <Picker.Item key={sec} label={`${sec} seconds`} value={sec} />
+                            ))}
+                        </Picker>
+                    </View>
+                </View>
+              )}
+
+              {/* Audio Picker 2 */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Audio File 2 (Optional)</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={tempAudioId2}
+                    onValueChange={(itemValue) => setTempAudioId2(itemValue)}
+                  >
+                    <Picker.Item label="None" value={null} />
+                    {audioFiles.map(file => (
+                      <Picker.Item
+                        key={`2-${file.id}`}
+                        label={file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name}
+                        value={file.id}
+                      />
                     ))}
                   </Picker>
                 </View>
@@ -420,8 +510,6 @@ export default function ProfileEditorScreen() {
     </View>
   );
 }
-
-import { Platform } from 'react-native';
 
 const styles = StyleSheet.create({
   container: {

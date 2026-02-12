@@ -4,7 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, Calendar, Music, HardDrive, Settings } from 'lucide-react-native';
+import { LayoutDashboard, Calendar, Music, HardDrive, Settings, Megaphone } from 'lucide-react-native';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
@@ -17,6 +17,7 @@ import ProfileEditorScreen from '../screens/ProfileEditorScreen';
 import AudioManagerScreen from '../screens/AudioManagerScreen';
 import DeviceListScreen from '../screens/DeviceListScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import BroadcastScreen from '../screens/BroadcastScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -58,9 +59,17 @@ function MainTabs() {
         }} 
       />
       <Tab.Screen 
+        name="BroadcastTab" 
+        component={BroadcastScreen} 
+        options={{ 
+          title: 'Broadcast',
+          tabBarIcon: ({ color, size }) => <Megaphone color={color} size={size} />
+        }} 
+      />
+      <Tab.Screen 
         name="DevicesTab" 
         component={DeviceListScreen} 
-        options={{ 
+        options={{  
           title: 'Devices',
           tabBarIcon: ({ color, size }) => <HardDrive color={color} size={size} />
         }} 

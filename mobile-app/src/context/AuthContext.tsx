@@ -6,15 +6,22 @@ type AuthContextType = {
   session: Session | null;
   loading: boolean;
   schoolId: string | null;
+  schoolName: string | null;
+  schoolLogo: string | null;
+  schoolAddress: string | null;
+  ttsEnabled: boolean;
 };
 
-const AuthContext = createContext<AuthContextType>({ session: null, loading: true, schoolId: null });
+const AuthContext = createContext<AuthContextType>({ session: null, loading: true, schoolId: null, schoolName: null, schoolLogo: null, schoolAddress: null, ttsEnabled: false });
 
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [schoolId, setSchoolId] = useState<string | null>(null);
+  const [schoolName, setSchoolName] = useState<string | null>(null);
+  const [schoolLogo, setSchoolLogo] = useState<string | null>(null);
+  const [schoolAddress, setSchoolAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,6 +37,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           fetchSchoolId(session.user.id);
       } else {
           setSchoolId(null);
+          setSchoolName(null);
+          setSchoolLogo(null);
+          setSchoolAddress(null);
           setLoading(false);
       }
     });
@@ -39,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchSchoolId = async (userId: string) => {
     try {
-        const { data, error } = await supabase
+        const { data: userData, error } = await supabase
             .from('users')
             .select('school_id')
             .eq('id', userId)
@@ -47,12 +57,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         if (error) {
             console.error('Error fetching school ID:', error);
-            // If user not found in public.users, it might be a new user or RLS issue.
-            // We'll leave schoolId as null, which might prompt a setup screen or "Contact Admin" message.
         }
         
-        if (data) {
-            setSchoolId(data.school_id);
+        if (userData && userData.school_id) {
+            setSchoolId(userData.school_id);
+            
+            // Fetch School Details (Name & Logo & Address)
+            const { data: schoolData } = await supabase
+                .from('schools')
+                .select('name, logo_url, address')
+                .eq('id', userData.school_id)
+                .single();
+                
+            if (schoolData) {
+                setSchoolName(schoolData.name);
+                setSchoolLogo(schoolData.logo_url);
+                setSchoolAddress(schoolData.address);
+            }
         } else {
             console.warn('User found but no school_id in public.users');
         }
@@ -64,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ session, loading, schoolId }}>
+    <AuthContext.Provider value={{ session, loading, schoolId, schoolName, schoolLogo, schoolAddress, ttsEnabled }}>
       {children}
     </AuthContext.Provider>
   );

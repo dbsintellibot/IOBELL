@@ -9,40 +9,36 @@ type AudioFile = {
   name: string;
   storage_path: string;
   duration: number;
+  track_number: number | null;
 };
 
 export default function ManualTriggerScreen() {
-  const { session, schoolId } = useAuth();
+  const { schoolId } = useAuth();
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (schoolId) {
-        loadCachedData();
-        fetchAudioFiles();
-    }
-  }, [schoolId]);
-
-  const loadCachedData = async () => {
+  const loadCachedData = React.useCallback(async () => {
     if (!schoolId) return;
     try {
       const cached = await AsyncStorage.getItem(`school_${schoolId}_manual_audioFiles`);
       if (cached) setAudioFiles(JSON.parse(cached));
     } catch (e) {
-      // ignore
+      console.log(e);
     }
-  };
+  }, [schoolId]);
 
-  const fetchAudioFiles = async () => {
+  const fetchAudioFiles = React.useCallback(async () => {
     if (!schoolId) return;
     try {
       const { data } = await supabase
         .from('audio_files')
-        .select('*')
-        .eq('school_id', schoolId);
+        .select('id, name, storage_path, duration, track_number')
+        .eq('school_id', schoolId)
+        .order('track_number', { ascending: true })
+        .order('created_at', { ascending: false });
 
       if (data) {
-        setAudioFiles(data);
+        setAudioFiles(data as AudioFile[]);
         AsyncStorage.setItem(`school_${schoolId}_manual_audioFiles`, JSON.stringify(data));
       }
     } catch (error) {
@@ -50,35 +46,63 @@ export default function ManualTriggerScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [schoolId]);
+
+  useEffect(() => {
+    if (schoolId) {
+        loadCachedData();
+        fetchAudioFiles();
+    }
+  }, [schoolId, loadCachedData, fetchAudioFiles]);
 
   const playAudio = async (audio: AudioFile) => {
     if (!schoolId) return;
     
-    // Broadcast message via Supabase Realtime
-    const channel = supabase.channel(`school:${schoolId}`);
-    
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await channel.send({
-          type: 'broadcast',
-          event: 'manual_ring',
+    try {
+      // Fetch devices first
+      const { data: devices } = await supabase
+        .from('bell_devices')
+        .select('id')
+        .eq('school_id', schoolId);
+
+      if (devices && devices.length > 0) {
+        const commands = devices.map(d => ({
+          device_id: d.id,
+          school_id: schoolId,
+          command: 'RING',
+          // Payload isn't used by ESP32 yet for RING, but storing it for context
           payload: { 
             audio_url: supabase.storage.from('audio-files').getPublicUrl(audio.storage_path).data.publicUrl,
             duration: audio.duration,
-            name: audio.name 
+            name: audio.name,
+            track_number: audio.track_number || 1
           },
-        });
+          status: 'pending'
+        }));
+
+        const { error } = await supabase
+          .from('command_queue')
+          .insert(commands);
+          
+        if (error) throw error;
         
-        Alert.alert('Sent', `Command to play "${audio.name}" sent.`);
-        supabase.removeChannel(channel);
+        Alert.alert('Sent', `Command to play "${audio.name}" queued for ${devices.length} device(s).`);
+      } else {
+        Alert.alert('Error', 'No devices found for this school.');
       }
-    });
+    } catch (error) {
+      console.error('Error sending command:', error);
+      Alert.alert('Error', 'Failed to send command.');
+    }
   };
 
   const renderItem = ({ item }: { item: AudioFile }) => (
     <TouchableOpacity style={styles.item} onPress={() => playAudio(item)}>
-      <Text style={styles.itemText}>{item.name}</Text>
+      <Text style={styles.itemText}>
+        {item.track_number 
+          ? `[${String(item.track_number).padStart(3, '0')}] ${item.name}` 
+          : item.name}
+      </Text>
       <Text style={styles.subText}>{item.duration}s</Text>
     </TouchableOpacity>
   );

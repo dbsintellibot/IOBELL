@@ -18,60 +18,100 @@ export default function ProfileSwitcherScreen() {
   const [loading, setLoading] = useState(true);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (schoolId) {
-      fetchProfiles();
-      loadActiveProfile();
-    }
-  }, [schoolId]);
-
-  const loadActiveProfile = async () => {
-    const id = await AsyncStorage.getItem(`school_${schoolId}_activeProfileId`);
-    setActiveProfileId(id);
-  };
-
-  const fetchProfiles = async () => {
+  const loadActiveProfile = React.useCallback(async () => {
     if (!schoolId) return;
     try {
       const { data } = await supabase
         .from('bell_profiles')
-        .select('id, name')
+        .select('id')
+        .eq('school_id', schoolId)
+        .eq('is_active', true)
+        .single();
+      
+      if (data) {
+        setActiveProfileId(data.id);
+        // Update cache for offline fallback
+        AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, data.id);
+      }
+    } catch {
+      // If DB fetch fails, fall back to cache
+      const id = await AsyncStorage.getItem(`school_${schoolId}_activeProfileId`);
+      setActiveProfileId(id);
+    }
+  }, [schoolId]);
+
+  const fetchProfiles = React.useCallback(async () => {
+    if (!schoolId) return;
+    try {
+      const { data } = await supabase
+        .from('bell_profiles')
+        .select('id, name, is_active')
         .eq('school_id', schoolId)
         .order('name');
 
-      if (data) setProfiles(data);
+      if (data) {
+        setProfiles(data);
+        const active = data.find(p => p.is_active);
+        if (active) setActiveProfileId(active.id);
+      }
     } catch (error) {
       console.error(error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [schoolId]);
+
+  useEffect(() => {
+    if (schoolId) {
+      fetchProfiles();
+      loadActiveProfile();
+    }
+  }, [schoolId, fetchProfiles, loadActiveProfile]);
 
   const activateProfile = async (profile: Profile) => {
     if (!schoolId) return;
 
-    await AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, profile.id);
-    await AsyncStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, profile.name);
-    setActiveProfileId(profile.id);
+    try {
+      setLoading(true);
+      // 1. Update Database (Source of Truth)
+      // The trigger 'ensure_single_active_profile' will handle setting others to false
+      const { error } = await supabase
+        .from('bell_profiles')
+        .update({ is_active: true })
+        .eq('id', profile.id)
+        .eq('school_id', schoolId);
 
-    const channel = supabase.channel(`school:${schoolId}`);
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await channel.send({
-          type: 'broadcast',
-          event: 'profile_change',
-          payload: { 
-            profile_id: profile.id,
-            profile_name: profile.name 
-          },
-        });
-        
-        Alert.alert('Success', `Active profile changed to: ${profile.name}`, [
-            { text: 'OK', onPress: () => navigation.goBack() }
-        ]);
-        supabase.removeChannel(channel);
+      if (error) throw error;
+
+      // 2. Update Local State & Cache
+      setActiveProfileId(profile.id);
+      await AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, profile.id);
+      await AsyncStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, profile.name);
+
+      // 3. Trigger ESP32 Sync via Command Queue
+      const { data: devices } = await supabase
+        .from('bell_devices')
+        .select('id')
+        .eq('school_id', schoolId);
+
+      if (devices && devices.length > 0) {
+        const commands = devices.map(d => ({
+          device_id: d.id,
+          command: 'CONFIG',
+          status: 'pending'
+        }));
+        await supabase.from('command_queue').insert(commands);
       }
-    });
+
+      Alert.alert('Success', `Active profile changed to: ${profile.name}`, [
+          { text: 'OK', onPress: () => navigation.goBack() }
+      ]);
+    } catch (error) {
+      console.error('Error activating profile:', error);
+      Alert.alert('Error', 'Failed to update active profile');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const renderItem = ({ item }: { item: Profile }) => {

@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, Vibration } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
 export default function EmergencyScreen() {
-  const { session, schoolId } = useAuth();
+  const { schoolId } = useAuth();
 
   const handlePress = () => {
     Alert.alert(
@@ -27,23 +27,40 @@ export default function EmergencyScreen() {
     // Vibrate to give feedback
     Vibration.vibrate(500);
 
-    const channel = supabase.channel(`school:${schoolId}`);
-    
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await channel.send({
-          type: 'broadcast',
-          event: 'emergency',
+    try {
+      // Fetch all devices for the school
+      const { data: devices } = await supabase
+        .from('bell_devices')
+        .select('id')
+        .eq('school_id', schoolId);
+
+      if (devices && devices.length > 0) {
+        // Insert EMERGENCY commands into command_queue
+        // Note: Current firmware uses 'RING' or 'TEST_BUZZER'. 
+        // We use 'RING' as it plays audio.
+        const commands = devices.map(d => ({
+          device_id: d.id,
+          school_id: schoolId,
+          command: 'RING', 
           payload: { 
             message: 'EMERGENCY TRIGGERED',
             timestamp: new Date().toISOString()
           },
-        });
+          status: 'pending'
+        }));
+
+        const { error } = await supabase.from('command_queue').insert(commands);
+        
+        if (error) throw error;
         
         Alert.alert('BROADCASTING', 'Emergency signal sent to all devices.');
-        supabase.removeChannel(channel);
+      } else {
+        Alert.alert('Error', 'No devices found for this school.');
       }
-    });
+    } catch (error) {
+      console.error('Emergency broadcast error:', error);
+      Alert.alert('Error', 'Failed to broadcast emergency signal.');
+    }
   };
 
   return (

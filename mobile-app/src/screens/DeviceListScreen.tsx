@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Alert, Modal, TextInput, StyleSheet, ActivityIndicator } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Wifi, WifiOff, Plus, X, Settings, RefreshCw } from 'lucide-react-native';
+import { Wifi, WifiOff, Plus, X, Settings, RefreshCw, Bell, PlayCircle } from 'lucide-react-native';
 
 type DeviceRecord = {
   id: string;
@@ -24,13 +24,7 @@ export default function DeviceListScreen() {
   const [serialNumber, setSerialNumber] = useState('');
   const [registering, setRegistering] = useState(false);
 
-  useEffect(() => {
-    fetchDevices();
-    const interval = setInterval(fetchDevices, 5000); // Poll for heartbeats
-    return () => clearInterval(interval);
-  }, [schoolId]);
-
-  const fetchDevices = async () => {
+  const fetchDevices = React.useCallback(async () => {
     if (!schoolId) return;
     try {
       const { data, error } = await supabase
@@ -46,7 +40,13 @@ export default function DeviceListScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [schoolId]);
+
+  useEffect(() => {
+    fetchDevices();
+    const interval = setInterval(fetchDevices, 5000); // Poll for heartbeats
+    return () => clearInterval(interval);
+  }, [fetchDevices]);
 
   const handleRegister = async () => {
     if (!newDeviceName.trim() || !serialNumber.trim()) {
@@ -76,14 +76,14 @@ export default function DeviceListScreen() {
     }
   };
 
-  const sendCommand = async (deviceId: string, command: string) => {
+  const sendCommand = async (deviceId: string, command: string, payload: any = {}) => {
     if (!schoolId) return;
     try {
       const { error } = await supabase.from('command_queue').insert({
         device_id: deviceId,
         school_id: schoolId,
         command,
-        payload: {}
+        payload
       });
 
       if (error) throw error;
@@ -123,6 +123,22 @@ export default function DeviceListScreen() {
         >
           <Settings size={16} color="#2563EB" />
           <Text style={styles.actionButtonText}>Config</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => sendCommand(item.id, 'TEST_BUZZER')}
+        >
+          <Bell size={16} color="#F59E0B" />
+          <Text style={[styles.actionButtonText, { color: '#F59E0B' }]}>Buzzer</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => sendCommand(item.id, 'TEST_AUDIO', { track_number: 12 })}
+        >
+          <PlayCircle size={16} color="#10B981" />
+          <Text style={[styles.actionButtonText, { color: '#10B981' }]}>Test Audio</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
@@ -320,6 +336,7 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    flexWrap: 'wrap',
     gap: 16,
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',

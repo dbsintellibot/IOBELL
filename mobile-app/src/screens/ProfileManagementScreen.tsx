@@ -18,7 +18,7 @@ export default function ProfileManagementScreen() {
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
 
-  const fetchProfiles = async () => {
+  const fetchProfiles = React.useCallback(async () => {
     if (!schoolId) return;
     setLoading(true);
     try {
@@ -35,19 +35,19 @@ export default function ProfileManagementScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [schoolId]);
 
   useFocusEffect(
     useCallback(() => {
       fetchProfiles();
-    }, [schoolId])
+    }, [fetchProfiles])
   );
 
   const handleCreateProfile = async () => {
     if (!newProfileName.trim()) return;
 
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('bell_profiles')
         .insert({
           name: newProfileName,

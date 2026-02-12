@@ -1,97 +1,54 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { Bell, Clock, Calendar, Zap, AlertTriangle, LogOut } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 export default function DashboardScreen() {
   const navigation = useNavigation<any>();
-  const { schoolId } = useAuth();
+  const { schoolId, schoolName, schoolLogo } = useAuth();
   const [nextBell, setNextBell] = useState<string | null>(null);
   const [activeProfile, setActiveProfile] = useState<string>('Loading...');
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (schoolId) {
-      loadCachedData();
-      fetchDashboardData();
-    }
-  }, [schoolId]);
-
-  if (!schoolId) {
-    return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.headerIcon, { backgroundColor: '#fee2e2' }]}>
-          <AlertTriangle color="#ef4444" size={32} />
-        </View>
-        <Text style={[styles.schoolName, { marginBottom: 8 }]}>Account Not Configured</Text>
-        <Text style={{ textAlign: 'center', color: '#64748b', marginBottom: 24 }}>
-          Your account is not associated with any school. Please contact your administrator to assign a school to your account.
-        </Text>
-        <TouchableOpacity onPress={() => supabase.auth.signOut()} style={[styles.changeButton, { borderColor: '#ef4444' }]}>
-          <Text style={[styles.buttonText, { color: '#ef4444' }]}>Sign Out</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  const loadCachedData = async () => {
-    if (!schoolId) return;
-    try {
-      const cachedProfile = await AsyncStorage.getItem(`school_${schoolId}_dashboard_activeProfile`);
-      const cachedProfileId = await AsyncStorage.getItem(`school_${schoolId}_activeProfileId`);
-      const cachedNextBell = await AsyncStorage.getItem(`school_${schoolId}_dashboard_nextBell`);
-      if (cachedProfile) setActiveProfile(cachedProfile);
-      if (cachedProfileId) setActiveProfileId(cachedProfileId);
-      if (cachedNextBell) setNextBell(cachedNextBell);
-    } catch (e) {
-      // ignore error
-    }
-  };
-
-  const fetchDashboardData = async () => {
+  // Define fetchDashboardData first so it can be used in useEffect
+  const fetchDashboardData = React.useCallback(async () => {
     if (!schoolId) return;
     setRefreshing(true);
     try {
-      // 1. Fetch Profiles
+      // 1. Fetch Active Profile from DB
       const { data: profiles, error: profileError } = await supabase
         .from('bell_profiles')
-        .select('id, name')
+        .select('id, name, is_active')
         .eq('school_id', schoolId)
-        .order('name');
+        .order('is_active', { ascending: false });
 
       if (profileError) throw profileError;
 
       if (!profiles || profiles.length === 0) {
         setActiveProfile('No Profiles');
         setNextBell('--:--');
-        setActiveProfileId(null);
         return;
       }
 
-      // Determine target profile ID (use cached if valid, else first)
-      let targetProfileId = activeProfileId;
-      if (!targetProfileId || !profiles.find(p => p.id === targetProfileId)) {
-        targetProfileId = profiles[0].id;
-      }
-
-      const selected = profiles.find(p => p.id === targetProfileId)!;
+      // Use the one marked is_active, or the first one if none are active
+      const active = profiles.find(p => p.is_active) || profiles[0];
       
       // Update state immediately for profile
-      setActiveProfile(selected.name);
-      setActiveProfileId(selected.id);
-      AsyncStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, selected.name);
-      AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, selected.id);
+      setActiveProfile(active.name);
+      AsyncStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, active.name);
+      AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, active.id);
 
       // 2. Fetch Bells for the target profile
       const today = new Date().getDay();
       const { data: bells, error: bellError } = await supabase
         .from('bell_times')
         .select('bell_time')
-        .eq('profile_id', selected.id)
+        .eq('profile_id', active.id)
         .contains('day_of_week', [today])
         .order('bell_time', { ascending: true });
 
@@ -99,88 +56,134 @@ export default function DashboardScreen() {
 
       if (bells && bells.length > 0) {
         const now = new Date();
-        const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:00`;
+        const currentTime = now.toLocaleTimeString('en-GB', { hour12: false }); // HH:MM:SS
         const next = bells.find(b => b.bell_time > currentTime);
-        const nextBellTime = next ? next.bell_time.substring(0, 5) : 'Done'; // Trim seconds
-        setNextBell(nextBellTime);
-        AsyncStorage.setItem(`school_${schoolId}_dashboard_nextBell`, nextBellTime);
+        
+        let displayTime = 'Done';
+        if (next) {
+          // Format next bell time
+          const [h, m] = next.bell_time.split(':');
+          const hour = parseInt(h);
+          const ampm = hour >= 12 ? 'PM' : 'AM';
+          const hour12 = hour % 12 || 12;
+          displayTime = `${hour12}:${m} ${ampm}`;
+        }
+        setNextBell(displayTime);
+        AsyncStorage.setItem(`school_${schoolId}_dashboard_nextBell`, displayTime);
       } else {
-        setNextBell('--:--');
+        setNextBell('No Bells');
+        AsyncStorage.setItem(`school_${schoolId}_dashboard_nextBell`, 'No Bells');
       }
-
-    } catch (error) {
-      console.error(error);
-      if (activeProfile === 'Loading...') setActiveProfile('Error');
+    } catch (e) {
+      console.log(e);
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [schoolId]);
+
+  const loadCachedData = React.useCallback(async () => {
+    if (!schoolId) return;
+    try {
+      const cachedProfile = await AsyncStorage.getItem(`school_${schoolId}_dashboard_activeProfile`);
+      const cachedNextBell = await AsyncStorage.getItem(`school_${schoolId}_dashboard_nextBell`);
+      if (cachedProfile) setActiveProfile(cachedProfile);
+      if (cachedNextBell) setNextBell(cachedNextBell);
+    } catch (e) {
+      console.log(e);
+    }
+  }, [schoolId]);
+
+  useEffect(() => {
+    if (schoolId) {
+      loadCachedData();
+      fetchDashboardData();
+    }
+  }, [schoolId, loadCachedData, fetchDashboardData]);
 
   return (
-    <ScrollView 
-      contentContainerStyle={styles.container}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchDashboardData} />}
-    >
-      <View style={styles.header}>
-        <View style={styles.headerIcon}>
-           <Bell color="#2563EB" size={32} />
-        </View>
-        <Text style={styles.schoolName}>AutoBell Dashboard</Text>
-      </View>
+    <LinearGradient colors={['#EFF6FF', '#F8FAFC']} style={styles.container}>
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchDashboardData} tintColor="#2563EB" />}
+      >
+        <Animated.View entering={FadeInDown.delay(100).duration(500)} style={styles.header}>
+          {schoolLogo ? (
+              <Image source={{ uri: schoolLogo }} style={styles.logoImage} />
+          ) : (
+              <View style={styles.headerIcon}>
+              <Bell color="#2563EB" size={28} />
+              </View>
+          )}
+          <Text style={styles.schoolName} numberOfLines={1}>{schoolName || 'AutoBell Dashboard'}</Text>
+        </Animated.View>
 
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Clock color="#64748b" size={20} />
-          <Text style={styles.cardTitle}>Next Bell</Text>
-        </View>
-        <Text style={styles.bigText}>{nextBell || '--:--'}</Text>
-      </View>
+        <Animated.View entering={FadeInDown.delay(200).duration(500)} style={styles.cardContainer}>
+            <View style={[styles.card, styles.highlightCard]}>
+                <LinearGradient
+                    colors={['#2563EB', '#1E40AF']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.cardGradient}
+                >
+                    <View style={styles.cardHeader}>
+                    <Clock color="rgba(255,255,255,0.9)" size={20} />
+                    <Text style={[styles.cardTitle, { color: 'rgba(255,255,255,0.9)' }]}>Next Bell</Text>
+                    </View>
+                    <Text style={[styles.bigText, { color: 'white' }]}>{nextBell || '--:--'}</Text>
+                </LinearGradient>
+            </View>
 
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Calendar color="#64748b" size={20} />
-          <Text style={styles.cardTitle}>Active Profile</Text>
-        </View>
-        <Text style={styles.profileText}>{activeProfile}</Text>
-        <TouchableOpacity 
-          style={styles.changeButton}
-          onPress={() => navigation.navigate('ProfileSwitcher')}
-        >
-          <Text style={styles.buttonText}>Change Profile</Text>
-        </TouchableOpacity>
-      </View>
+            <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                <Calendar color="#64748b" size={20} />
+                <Text style={styles.cardTitle}>Active Profile</Text>
+                </View>
+                <Text style={styles.profileText}>{activeProfile}</Text>
+                <TouchableOpacity 
+                style={styles.changeButton}
+                onPress={() => navigation.navigate('ProfileSwitcher')}
+                >
+                <Text style={styles.buttonText}>Change Profile</Text>
+                </TouchableOpacity>
+            </View>
+        </Animated.View>
 
-      <View style={styles.actionsGrid}>
-        <TouchableOpacity 
-          style={[styles.actionButton, styles.manualButton]}
-          onPress={() => navigation.navigate('ManualTrigger')}
-        >
-          <Zap color="white" size={32} style={{ marginBottom: 8 }} />
-          <Text style={styles.actionButtonText}>Manual Trigger</Text>
-        </TouchableOpacity>
+        <Animated.View entering={FadeInDown.delay(300).duration(500)} style={styles.actionsGrid}>
+          <TouchableOpacity 
+            style={[styles.actionButton, styles.manualButton]}
+            onPress={() => navigation.navigate('ManualTrigger')}
+          >
+            <Zap color="white" size={28} style={{ marginBottom: 8 }} />
+            <Text style={styles.actionButtonText}>Manual Trigger</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.actionButton, styles.emergencyButton]}
-          onPress={() => navigation.navigate('Emergency')}
-        >
-          <AlertTriangle color="white" size={32} style={{ marginBottom: 8 }} />
-          <Text style={styles.actionButtonText}>EMERGENCY</Text>
-        </TouchableOpacity>
-      </View>
-      
-      <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.logoutButton}>
-          <LogOut color="gray" size={20} style={{ marginRight: 8 }} />
-          <Text style={styles.logoutText}>Logout</Text>
-      </TouchableOpacity>
-    </ScrollView>
+          <TouchableOpacity 
+            style={[styles.actionButton, styles.emergencyButton]}
+            onPress={() => navigation.navigate('Emergency')}
+          >
+            <AlertTriangle color="white" size={28} style={{ marginBottom: 8 }} />
+            <Text style={styles.actionButtonText}>EMERGENCY</Text>
+          </TouchableOpacity>
+        </Animated.View>
+        
+        <Animated.View entering={FadeInDown.delay(400).duration(500)}>
+            <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.logoutButton}>
+                <LogOut color="#94a3b8" size={20} style={{ marginRight: 8 }} />
+                <Text style={styles.logoutText}>Logout</Text>
+            </TouchableOpacity>
+        </Animated.View>
+      </ScrollView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  scrollContent: {
     padding: 20,
-    backgroundColor: '#f1f5f9',
-    flexGrow: 1,
+    paddingTop: 60,
   },
   header: {
     marginBottom: 24,
@@ -192,103 +195,126 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#dbeafe',
+    backgroundColor: 'white',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
-  },
-  schoolName: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1e293b',
-  },
-  card: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    alignItems: 'center',
-    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  logoImage: {
+    width: 48,
+    height: 48,
+    marginRight: 12,
+    borderRadius: 24,
+    backgroundColor: 'white',
+  },
+  schoolName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1e293b',
+    flex: 1,
+  },
+  cardContainer: {
+    marginBottom: 24,
+    gap: 16,
+  },
+  card: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  highlightCard: {
+    padding: 0,
+    overflow: 'hidden',
+  },
+  cardGradient: {
+    padding: 20,
   },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
-    alignSelf: 'flex-start',
   },
   cardTitle: {
-    fontSize: 16,
+    marginLeft: 8,
+    fontSize: 14,
     fontWeight: '600',
     color: '#64748b',
-    marginLeft: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   bigText: {
-    fontSize: 56,
+    fontSize: 42,
     fontWeight: '800',
-    color: '#1e293b',
-    letterSpacing: 2,
+    color: '#0f172a',
   },
   profileText: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#10b981',
+    color: '#0f172a',
     marginBottom: 16,
   },
   changeButton: {
     backgroundColor: '#eff6ff',
-    paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#dbeafe',
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
   },
   buttonText: {
     color: '#2563EB',
     fontWeight: '600',
+    fontSize: 14,
   },
   actionsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 32,
+    gap: 16,
   },
   actionButton: {
-    flex: 0.48,
-    height: 120,
-    justifyContent: 'center',
+    flex: 1,
+    padding: 20,
+    borderRadius: 20,
     alignItems: 'center',
-    borderRadius: 16,
-    elevation: 4,
+    justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.1,
     shadowRadius: 8,
+    elevation: 4,
   },
   manualButton: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#0ea5e9', // Sky blue
   },
   emergencyButton: {
-    backgroundColor: '#ef4444',
+    backgroundColor: '#ef4444', // Red
   },
   actionButtonText: {
     color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    fontWeight: '700',
+    fontSize: 14,
+    marginTop: 4,
   },
   logoutButton: {
-      marginTop: 20,
-      flexDirection: 'row',
-      alignSelf: 'center',
-      alignItems: 'center',
-      padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    marginBottom: 32,
   },
   logoutText: {
-      color: 'gray',
-      fontSize: 16,
-      fontWeight: '500',
-  }
+    color: '#64748b',
+    fontSize: 16,
+    fontWeight: '500',
+  },
 });
