@@ -35,6 +35,7 @@ $$ LANGUAGE sql SECURITY DEFINER;
 
 -- 5. RLS Policies for Device Inventory
 -- Super Admin can do everything
+DROP POLICY IF EXISTS "Super admin full access to device_inventory" ON public.device_inventory;
 CREATE POLICY "Super admin full access to device_inventory" ON public.device_inventory
     FOR ALL
     USING (is_super_admin());
@@ -90,13 +91,28 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- 7. Update RLS Policies for other tables to allow Super Admin access
 -- Note: Policies are additive (OR logic), so adding these allows Super Admin access alongside existing policies.
 
+DROP POLICY IF EXISTS "Super admin full access users" ON public.users;
 CREATE POLICY "Super admin full access users" ON public.users FOR ALL USING (is_super_admin());
+
+DROP POLICY IF EXISTS "Super admin full access schools" ON public.schools;
 CREATE POLICY "Super admin full access schools" ON public.schools FOR ALL USING (is_super_admin());
+
+DROP POLICY IF EXISTS "Super admin full access bell_devices" ON public.bell_devices;
 CREATE POLICY "Super admin full access bell_devices" ON public.bell_devices FOR ALL USING (is_super_admin());
+
+DROP POLICY IF EXISTS "Super admin full access audio_files" ON public.audio_files;
 CREATE POLICY "Super admin full access audio_files" ON public.audio_files FOR ALL USING (is_super_admin());
+
+DROP POLICY IF EXISTS "Super admin full access bell_profiles" ON public.bell_profiles;
 CREATE POLICY "Super admin full access bell_profiles" ON public.bell_profiles FOR ALL USING (is_super_admin());
+
+DROP POLICY IF EXISTS "Super admin full access bell_times" ON public.bell_times;
 CREATE POLICY "Super admin full access bell_times" ON public.bell_times FOR ALL USING (is_super_admin());
+
+DROP POLICY IF EXISTS "Super admin full access device_logs" ON public.device_logs;
 CREATE POLICY "Super admin full access device_logs" ON public.device_logs FOR ALL USING (is_super_admin());
+
+DROP POLICY IF EXISTS "Super admin full access command_queue" ON public.command_queue;
 CREATE POLICY "Super admin full access command_queue" ON public.command_queue FOR ALL USING (is_super_admin());
 
 -- 8. Function to setup super admin (to be used securely)

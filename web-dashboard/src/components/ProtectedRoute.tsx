@@ -26,5 +26,9 @@ export function ProtectedRoute({ requiredRole }: ProtectedRouteProps) {
     return <Navigate to="/dashboard" replace />
   }
 
+  if (!requiredRole && role === 'super_admin') {
+    return <Navigate to="/super-admin" replace />
+  }
+
   return <Outlet />
 }

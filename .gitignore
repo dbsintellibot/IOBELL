@@ -17,6 +17,7 @@ dist/
 # Misc
 .DS_Store
 *.pem
+.tmp.driveupload/
 
 # Debug
 npm-debug.log*

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator, Platform, TextInput } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Clock, Music, X, Trash2 } from 'lucide-react-native';
+import { Plus, Clock, Music, X, Trash2, Type } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
 import TimeFormat from '../utils/timeFormat';
@@ -21,6 +21,8 @@ type ScheduleItem = {
   audio_file_id_2: string | null;
   delay_seconds: number;
   day_of_week: number;
+  play_type: 'mp3' | 'tts';
+  tts_message: string | null;
 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -46,6 +48,8 @@ export default function ProfileEditorScreen() {
   const [tempAudioId2, setTempAudioId2] = useState<string | null>(null);
   const [tempDelay, setTempDelay] = useState<number>(0);
   const [tempDays, setTempDays] = useState<number[]>([]);
+  const [tempPlayType, setTempPlayType] = useState<'mp3' | 'tts'>('mp3');
+  const [tempTtsMessage, setTempTtsMessage] = useState<string>('');
   const [showTimePicker, setShowTimePicker] = useState(false);
 
   const fetchData = React.useCallback(async () => {
@@ -62,7 +66,7 @@ export default function ProfileEditorScreen() {
       // Fetch Schedule
       const { data: scheduleData } = await supabase
         .from('bell_times')
-        .select('id, bell_time, day_of_week, audio_file_id, audio_file_id_2, delay_seconds')
+        .select('id, bell_time, day_of_week, audio_file_id, audio_file_id_2, delay_seconds, play_type, tts_message')
         .eq('profile_id', profileId);
 
       const items: ScheduleItem[] = [];
@@ -76,7 +80,9 @@ export default function ProfileEditorScreen() {
                 audio_file_id_2: row.audio_file_id_2,
                 delay_seconds: row.delay_seconds || 0,
                 // DB (7=Sun) -> UI (0=Sun)
-                day_of_week: day === 7 ? 0 : day
+                day_of_week: day === 7 ? 0 : day,
+                play_type: row.play_type || 'mp3',
+                tts_message: row.tts_message
             });
         });
       });
@@ -116,7 +122,9 @@ export default function ProfileEditorScreen() {
         delay_seconds: item.delay_seconds,
         // UI (0=Sun) -> DB (7=Sun)
         day_of_week: [item.day_of_week === 0 ? 7 : item.day_of_week],
-        profile_id: profileId
+        profile_id: profileId,
+        play_type: item.play_type,
+        tts_message: item.tts_message
       }));
 
       if (itemsToInsert.length > 0) {
@@ -165,6 +173,8 @@ export default function ProfileEditorScreen() {
     setTempAudioId2(null);
     setTempDelay(0);
     setTempDays([selectedDay]);
+    setTempPlayType('mp3');
+    setTempTtsMessage('');
     setModalVisible(true);
   };
 
@@ -176,12 +186,20 @@ export default function ProfileEditorScreen() {
     setTempAudioId2(item.audio_file_id_2);
     setTempDelay(item.delay_seconds);
     setTempDays([item.day_of_week]);
+    setTempPlayType(item.play_type);
+    setTempTtsMessage(item.tts_message || '');
     setModalVisible(true);
   };
 
   const handleSaveItem = () => {
     const timeStr = TimeFormat.formatFromDate(tempTime);
     
+    // Validation
+    if (tempPlayType === 'tts' && !tempAudioId && !tempTtsMessage.trim()) {
+        Alert.alert('Validation Error', 'For Text-to-Speech, select an audio file or enter a message.');
+        return;
+    }
+
     if (editingItem) {
       const newItems = schedule.filter(i => i.id !== editingItem.id);
       
@@ -192,7 +210,9 @@ export default function ProfileEditorScreen() {
           audio_file_id: tempAudioId,
           audio_file_id_2: tempAudioId2,
           delay_seconds: tempDelay,
-          day_of_week: day
+          day_of_week: day,
+          play_type: tempPlayType,
+          tts_message: tempPlayType === 'tts' && !tempAudioId ? tempTtsMessage : null
         });
       });
       
@@ -206,7 +226,9 @@ export default function ProfileEditorScreen() {
           audio_file_id: tempAudioId,
           audio_file_id_2: tempAudioId2,
           delay_seconds: tempDelay,
-          day_of_week: day
+          day_of_week: day,
+          play_type: tempPlayType,
+          tts_message: tempPlayType === 'tts' && !tempAudioId ? tempTtsMessage : null
         });
       });
       setSchedule(newItems);
@@ -252,6 +274,7 @@ export default function ProfileEditorScreen() {
 
     const audioName = getLabel(audio1);
     const audioName2 = audio2 ? getLabel(audio2) : null;
+    const isTts = item.play_type === 'tts';
 
     return (
       <TouchableOpacity 
@@ -264,10 +287,12 @@ export default function ProfileEditorScreen() {
             <Text style={styles.timeText}>{item.bell_time}</Text>
           </View>
           <View style={styles.audioContainer}>
-            <Music size={14} color="#6B7280" />
+            {isTts ? <Type size={14} color="#6B7280" /> : <Music size={14} color="#6B7280" />}
             <Text style={styles.audioText} numberOfLines={1}>
-                {audioName}
-                {audioName2 ? ` + ${audioName2} (${item.delay_seconds}s)` : ''}
+                {isTts 
+                    ? (item.audio_file_id ? `${audioName} (TTS Audio)` : (item.tts_message || 'No Message'))
+                    : `${audioName}${audioName2 ? ` + ${audioName2} (${item.delay_seconds}s)` : ''}`
+                }
             </Text>
           </View>
         </View>
@@ -414,62 +439,131 @@ export default function ProfileEditorScreen() {
                 </View>
               </View>
 
-              {/* Audio Picker 1 */}
+              {/* Play Type Selection */}
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Audio File 1</Text>
-                <View style={styles.pickerContainer}>
-                  <Picker
-                    selectedValue={tempAudioId}
-                    onValueChange={(itemValue) => setTempAudioId(itemValue)}
-                  >
-                    <Picker.Item label="Select audio..." value={null} />
-                    {audioFiles.map(file => (
-                      <Picker.Item
-                        key={file.id}
-                        label={file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name}
-                        value={file.id}
-                      />
-                    ))}
-                  </Picker>
+                <Text style={styles.label}>Play Type</Text>
+                <View style={styles.typeSelector}>
+                    <TouchableOpacity 
+                        style={[styles.typeButton, tempPlayType === 'mp3' && styles.selectedTypeButton]}
+                        onPress={() => setTempPlayType('mp3')}
+                    >
+                        <Music size={16} color={tempPlayType === 'mp3' ? '#fff' : '#4B5563'} />
+                        <Text style={[styles.typeButtonText, tempPlayType === 'mp3' && styles.selectedTypeButtonText]}>MP3 Audio</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                        style={[styles.typeButton, tempPlayType === 'tts' && styles.selectedTypeButton]}
+                        onPress={() => {
+                            setTempPlayType('tts');
+                            setTempAudioId(null); 
+                            setTempAudioId2(null);
+                        }}
+                    >
+                        <Type size={16} color={tempPlayType === 'tts' ? '#fff' : '#4B5563'} />
+                        <Text style={[styles.typeButtonText, tempPlayType === 'tts' && styles.selectedTypeButtonText]}>Text to Speech</Text>
+                    </TouchableOpacity>
                 </View>
               </View>
 
-              {/* Delay Picker */}
-              {tempAudioId2 && (
-                <View style={styles.formGroup}>
-                    <Text style={styles.label}>Delay (Seconds)</Text>
-                    <View style={styles.pickerContainer}>
+              {tempPlayType === 'mp3' ? (
+                  <>
+                    {/* Audio Picker 1 */}
+                    <View style={styles.formGroup}>
+                        <Text style={styles.label}>Audio File 1</Text>
+                        <View style={styles.pickerContainer}>
                         <Picker
-                            selectedValue={tempDelay}
-                            onValueChange={(val) => setTempDelay(val)}
+                            selectedValue={tempAudioId}
+                            onValueChange={(itemValue) => setTempAudioId(itemValue)}
                         >
-                            {Array.from({length: 31}, (_, i) => i).map(sec => (
-                                <Picker.Item key={sec} label={`${sec} seconds`} value={sec} />
+                            <Picker.Item label="Select audio..." value={null} />
+                            {audioFiles.map(file => (
+                            <Picker.Item
+                                key={file.id}
+                                label={file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name}
+                                value={file.id}
+                            />
                             ))}
                         </Picker>
+                        </View>
                     </View>
-                </View>
-              )}
 
-              {/* Audio Picker 2 */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Audio File 2 (Optional)</Text>
-                <View style={styles.pickerContainer}>
-                  <Picker
-                    selectedValue={tempAudioId2}
-                    onValueChange={(itemValue) => setTempAudioId2(itemValue)}
-                  >
-                    <Picker.Item label="None" value={null} />
-                    {audioFiles.map(file => (
-                      <Picker.Item
-                        key={`2-${file.id}`}
-                        label={file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name}
-                        value={file.id}
-                      />
-                    ))}
-                  </Picker>
-                </View>
-              </View>
+                    {/* Delay Picker */}
+                    {tempAudioId2 && (
+                        <View style={styles.formGroup}>
+                            <Text style={styles.label}>Delay (Seconds)</Text>
+                            <View style={styles.pickerContainer}>
+                                <Picker
+                                    selectedValue={tempDelay}
+                                    onValueChange={(val) => setTempDelay(val)}
+                                >
+                                    {Array.from({length: 31}, (_, i) => i).map(sec => (
+                                        <Picker.Item key={sec} label={`${sec} seconds`} value={sec} />
+                                    ))}
+                                </Picker>
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Audio Picker 2 */}
+                    <View style={styles.formGroup}>
+                        <Text style={styles.label}>Audio File 2 (Optional)</Text>
+                        <View style={styles.pickerContainer}>
+                        <Picker
+                            selectedValue={tempAudioId2}
+                            onValueChange={(itemValue) => setTempAudioId2(itemValue)}
+                        >
+                            <Picker.Item label="None" value={null} />
+                            {audioFiles.map(file => (
+                            <Picker.Item
+                                key={`2-${file.id}`}
+                                label={file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name}
+                                value={file.id}
+                            />
+                            ))}
+                        </Picker>
+                        </View>
+                    </View>
+                  </>
+              ) : (
+                  <>
+                    {/* TTS Configuration */}
+                    <View style={styles.formGroup}>
+                        <Text style={styles.label}>Audio Override (Optional)</Text>
+                        <Text style={styles.helperText}>Select an audio file to play instead of speaking text.</Text>
+                        <View style={styles.pickerContainer}>
+                            <Picker
+                                selectedValue={tempAudioId}
+                                onValueChange={(val) => {
+                                    setTempAudioId(val);
+                                    if (val) setTempTtsMessage('');
+                                }}
+                            >
+                                <Picker.Item label="None (Use Text)" value={null} />
+                                {audioFiles.map(file => (
+                                    <Picker.Item 
+                                        key={file.id} 
+                                        label={file.track_number ? `[${String(file.track_number).padStart(3, '0')}] ${file.name}` : file.name}
+                                        value={file.id} 
+                                    />
+                                ))}
+                            </Picker>
+                        </View>
+                    </View>
+
+                    <View style={styles.formGroup}>
+                        <Text style={styles.label}>Message</Text>
+                        <TextInput
+                            style={[styles.input, tempAudioId ? styles.disabledInput : {}]}
+                            value={tempTtsMessage}
+                            onChangeText={setTempTtsMessage}
+                            placeholder={tempAudioId ? "Audio file selected" : "Enter text to speak..."}
+                            editable={!tempAudioId}
+                            multiline
+                            numberOfLines={3}
+                            textAlignVertical="top"
+                        />
+                    </View>
+                  </>
+              )}
 
               {/* Days Selection */}
               <View style={styles.formGroup}>
@@ -586,6 +680,7 @@ const styles = StyleSheet.create({
   audioText: {
     fontSize: 14,
     color: '#6B7280',
+    flex: 1,
   },
   deleteButton: {
     padding: 8,
@@ -630,6 +725,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     padding: 24,
     maxHeight: '80%',
+    width: '100%',
+    alignSelf: 'stretch',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -658,6 +755,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     alignItems: 'center',
+    alignSelf: 'stretch',
   },
   timeButtonText: {
     fontSize: 18,
@@ -669,19 +767,23 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 8,
     overflow: 'hidden',
+    width: '100%',
+    alignSelf: 'stretch',
   },
   daysGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    justifyContent: 'space-between',
   },
   dayOption: {
-    width: '30%',
+    flexBasis: '31%',
+    maxWidth: '31%',
     paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     alignItems: 'center',
+    marginBottom: 8,
   },
   selectedDayOption: {
     backgroundColor: '#2563EB',
@@ -706,5 +808,52 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  typeSelector: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  typeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  selectedTypeButton: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  typeButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#4B5563',
+  },
+  selectedTypeButtonText: {
+    color: '#fff',
+  },
+  helperText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#1F2937',
+    minHeight: 100,
+  },
+  disabledInput: {
+    backgroundColor: '#F3F4F6',
+    color: '#9CA3AF',
   },
 });

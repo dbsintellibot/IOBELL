@@ -1,38 +1,40 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ScrollView, ActivityIndicator } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import SecureStorage from '../utils/SecureStorage';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
 import { supabase } from '../lib/supabase';
-import { generateTTS } from '../lib/tts';
+import { generateTTS, generateTopMediaiTTS, generateCambAITTS, generateElevenLabsTTS } from '../lib/tts';
 import { useAuth } from '../context/AuthContext';
 import { Mic, Square, Play, Send, Type, Radio, Trash2 } from 'lucide-react-native';
 
+type TtsProvider = 'google-free' | 'openai' | 'cambai' | 'elevenlabs' | 'topmediai';
+type GoogleFreeVoiceGender = 'female' | 'male';
+
 export default function BroadcastScreen() {
-  const { schoolId, ttsEnabled } = useAuth();
+  const { schoolId, ttsEnabled, session } = useAuth();
   const [activeTab, setActiveTab] = useState<'text' | 'voice'>('text');
-  
-  if (!ttsEnabled) {
-    return (
-      <View style={styles.disabledContainer}>
-        <View style={styles.disabledContent}>
-          <Radio size={48} color="#EAB308" />
-          <Text style={styles.disabledTitle}>Feature Disabled</Text>
-          <Text style={styles.disabledText}>
-            The Text-to-Speech and Voice Note feature is currently disabled for your account. 
-            Please contact the Super Admin to enable it.
-          </Text>
-        </View>
-      </View>
-    );
-  }
-  
+
   // TTS State
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>('google-free');
   const [text, setText] = useState('');
+  const [googleFreeVoiceGender, setGoogleFreeVoiceGender] = useState<GoogleFreeVoiceGender>('female');
   const [apiKey, setApiKey] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
   const [model, setModel] = useState('tts-1');
+  const ttsLanguage = 'en';
+
+  // TopMediai State
+  const [topMediaiKey, setTopMediaiKey] = useState('');
+  const [topMediaiSpeaker, setTopMediaiSpeaker] = useState('00151554-3826-11ee-a861-00163e2ac61b');
+  const [topMediaiEmotion, setTopMediaiEmotion] = useState('Neutral');
+
+  // Camb.ai State
+  const [cambAiKey, setCambAiKey] = useState('');
+
+  // ElevenLabs State
+  const [elevenLabsKey, setElevenLabsKey] = useState('');
+  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState('21m00Tcm4TlvDq8ikWAM');
   
   // Voice Note State
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -54,20 +56,101 @@ export default function BroadcastScreen() {
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const [key, savedUrl, savedModel] = await Promise.all([
-          AsyncStorage.getItem('openai_api_key'),
-          AsyncStorage.getItem('openai_base_url'),
-          AsyncStorage.getItem('openai_model')
+        const [
+          key,
+          savedUrl,
+          savedModel,
+          savedTmKey,
+          savedTmSpeaker,
+          savedTmEmotion,
+          savedCambAiKey,
+          savedElevenKey,
+          savedElevenVoiceId,
+          savedGoogleFreeGender,
+        ] = await Promise.all([
+          SecureStorage.getItem('openai_api_key'),
+          SecureStorage.getItem('openai_base_url'),
+          SecureStorage.getItem('openai_model'),
+          SecureStorage.getItem('topmediai_api_key'),
+          SecureStorage.getItem('topmediai_speaker'),
+          SecureStorage.getItem('topmediai_emotion'),
+          SecureStorage.getItem('cambai_api_key'),
+          SecureStorage.getItem('elevenlabs_api_key'),
+          SecureStorage.getItem('elevenlabs_voice_id'),
+          SecureStorage.getItem('google_free_voice_gender'),
         ]);
         if (key) setApiKey(key);
         if (savedUrl) setBaseUrl(savedUrl);
         if (savedModel) setModel(savedModel);
+        if (savedTmKey) setTopMediaiKey(savedTmKey);
+        if (savedTmSpeaker) setTopMediaiSpeaker(savedTmSpeaker);
+        if (savedTmEmotion) setTopMediaiEmotion(savedTmEmotion);
+        if (savedCambAiKey) setCambAiKey(savedCambAiKey);
+        if (savedElevenKey) setElevenLabsKey(savedElevenKey);
+        if (savedElevenVoiceId) setElevenLabsVoiceId(savedElevenVoiceId);
+        if (savedGoogleFreeGender === 'male' || savedGoogleFreeGender === 'female') {
+          setGoogleFreeVoiceGender(savedGoogleFreeGender);
+        }
       } catch (e) {
         console.error('Failed to load settings', e);
       }
     };
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    const loadTtsProviderPreference = async () => {
+      if (!session?.user) return;
+
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('tts_provider')
+          .eq('id', session.user.id)
+          .single();
+
+        if (error) {
+          console.error('Error loading TTS provider preference:', error);
+          return;
+        }
+
+        const provider = data?.tts_provider as TtsProvider | null;
+
+        if (
+          provider === 'google-free' ||
+          provider === 'openai' ||
+          provider === 'cambai' ||
+          provider === 'elevenlabs' ||
+          provider === 'topmediai'
+        ) {
+          setTtsProvider(provider);
+          await SecureStorage.setItem('tts_provider', provider);
+        } else {
+          setTtsProvider('google-free');
+          await SecureStorage.setItem('tts_provider', 'google-free');
+        }
+      } catch (error) {
+        console.error('Unexpected error loading TTS provider preference:', error);
+      }
+    };
+
+    loadTtsProviderPreference();
+  }, [session]);
+
+  if (!ttsEnabled) {
+    return (
+      <View style={styles.disabledContainer}>
+        <View style={styles.disabledContent}>
+          <Radio size={48} color="#EAB308" />
+          <Text style={styles.disabledTitle}>Feature Disabled</Text>
+          <Text style={styles.disabledText}>
+            The Text-to-Speech and Voice Note feature is currently disabled for your account. 
+            Please contact the Super Admin to enable it.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   const startRecording = async () => {
     try {
@@ -131,7 +214,7 @@ export default function BroadcastScreen() {
 
       // 2. Upload to Supabase
       const fileName = `${schoolId}/${Date.now()}_voice_note.m4a`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('voice-notes')
         .upload(fileName, blob, {
           contentType: 'audio/mp4' // Expo high quality is usually m4a/mp4
@@ -182,17 +265,79 @@ export default function BroadcastScreen() {
 
   const broadcastText = async () => {
     if (!text || !schoolId) return;
-    
-    if (!apiKey) {
+
+    if (ttsProvider === 'google-free') {
+      setIsSending(true);
+      try {
+        const { data: devices, error: deviceError } = await supabase
+          .from('bell_devices')
+          .select('id')
+          .eq('school_id', schoolId);
+
+        if (deviceError) throw deviceError;
+
+        if (!devices || devices.length === 0) {
+          throw new Error('No devices found for this school');
+        }
+
+        const commands = devices.map(d => ({
+          device_id: d.id,
+          command: 'TTS',
+          payload: { text, language: ttsLanguage, voice_gender: googleFreeVoiceGender },
+          status: 'pending',
+          school_id: schoolId,
+        }));
+
+        const { error: cmdError } = await supabase
+          .from('command_queue')
+          .insert(commands);
+
+        if (cmdError) throw cmdError;
+
+        Alert.alert('Success', 'Announcement broadcasted successfully!');
+        setText('');
+      } catch (error: any) {
+        console.error('Broadcast failed:', error);
+        Alert.alert('Error', error.message || 'Failed to broadcast');
+      } finally {
+        setIsSending(false);
+      }
+      return;
+    }
+
+    if (ttsProvider === 'openai' && !apiKey) {
       Alert.alert('Missing API Key', 'Please enter your OpenAI API Key.');
+      return;
+    }
+
+    if (ttsProvider === 'topmediai' && !topMediaiKey) {
+      Alert.alert('Missing API Key', 'Please enter your TopMediai API Key.');
+      return;
+    }
+
+    if (ttsProvider === 'cambai' && !cambAiKey) {
+      Alert.alert('Missing API Key', 'Please enter your Camb.ai API Key.');
+      return;
+    }
+
+    if (ttsProvider === 'elevenlabs' && !elevenLabsKey) {
+      Alert.alert('Missing API Key', 'Please enter your ElevenLabs API Key.');
       return;
     }
 
     setIsSending(true);
 
     try {
-      // 1. Generate TTS
-      const audioBlob = await generateTTS(text, apiKey, baseUrl, model);
+      let audioBlob;
+      if (ttsProvider === 'topmediai') {
+        audioBlob = await generateTopMediaiTTS(text, topMediaiKey, topMediaiSpeaker, topMediaiEmotion);
+      } else if (ttsProvider === 'cambai') {
+        audioBlob = await generateCambAITTS(text, cambAiKey);
+      } else if (ttsProvider === 'elevenlabs') {
+        audioBlob = await generateElevenLabsTTS(text, elevenLabsKey, elevenLabsVoiceId);
+      } else {
+        audioBlob = await generateTTS(text, apiKey, baseUrl, model);
+      }
       
       // 2. Upload to Supabase
       const fileName = `${schoolId}/${Date.now()}_tts.mp3`;
@@ -277,8 +422,190 @@ export default function BroadcastScreen() {
               onChangeText={setText}
               textAlignVertical="top"
             />
-            
-            {!apiKey && (
+
+            <Text style={[styles.label, { marginTop: 8 }]}>TTS Provider</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+              <TouchableOpacity
+                style={[
+                  styles.providerButton,
+                  ttsProvider === 'google-free' && styles.activeProviderButton,
+                ]}
+                onPress={async () => {
+                  setTtsProvider('google-free');
+                  await SecureStorage.setItem('tts_provider', 'google-free');
+                  if (session?.user) {
+                    try {
+                      const { error } = await supabase
+                        .from('users')
+                        .update({ tts_provider: 'google-free' })
+                        .eq('id', session.user.id);
+                      if (error) {
+                        console.error('Failed to save TTS provider preference:', error);
+                      }
+                    } catch (error) {
+                      console.error('Unexpected error saving TTS provider preference:', error);
+                    }
+                  }
+                }}
+              >
+                <Text
+                  style={[
+                    styles.providerButtonText,
+                    ttsProvider === 'google-free' && styles.activeProviderButtonText,
+                  ]}
+                >
+                  Device Built-in
+                </Text>
+                <Text style={{ fontSize: 10, color: '#6B7280' }}>Free · Default</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.providerButton,
+                  ttsProvider === 'openai' && styles.activeProviderButton,
+                ]}
+                onPress={async () => {
+                  setTtsProvider('openai');
+                  await SecureStorage.setItem('tts_provider', 'openai');
+                  if (session?.user) {
+                    try {
+                      const { error } = await supabase
+                        .from('users')
+                        .update({ tts_provider: 'openai' })
+                        .eq('id', session.user.id);
+                      if (error) {
+                        console.error('Failed to save TTS provider preference:', error);
+                      }
+                    } catch (error) {
+                      console.error('Unexpected error saving TTS provider preference:', error);
+                    }
+                  }
+                }}
+              >
+                <Text
+                  style={[
+                    styles.providerButtonText,
+                    ttsProvider === 'openai' && styles.activeProviderButtonText,
+                  ]}
+                >
+                  OpenAI TTS
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.providerButton,
+                  ttsProvider === 'cambai' && styles.activeProviderButton,
+                ]}
+                onPress={async () => {
+                  setTtsProvider('cambai');
+                  await SecureStorage.setItem('tts_provider', 'cambai');
+                  if (session?.user) {
+                    try {
+                      const { error } = await supabase
+                        .from('users')
+                        .update({ tts_provider: 'cambai' })
+                        .eq('id', session.user.id);
+                      if (error) {
+                        console.error('Failed to save TTS provider preference:', error);
+                      }
+                    } catch (error) {
+                      console.error('Unexpected error saving TTS provider preference:', error);
+                    }
+                  }
+                }}
+              >
+                <Text
+                  style={[
+                    styles.providerButtonText,
+                    ttsProvider === 'cambai' && styles.activeProviderButtonText,
+                  ]}
+                >
+                  Camb AI TTS
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.providerButton,
+                  ttsProvider === 'elevenlabs' && styles.activeProviderButton,
+                ]}
+                onPress={async () => {
+                  setTtsProvider('elevenlabs');
+                  await SecureStorage.setItem('tts_provider', 'elevenlabs');
+                  if (session?.user) {
+                    try {
+                      const { error } = await supabase
+                        .from('users')
+                        .update({ tts_provider: 'elevenlabs' })
+                        .eq('id', session.user.id);
+                      if (error) {
+                        console.error('Failed to save TTS provider preference:', error);
+                      }
+                    } catch (error) {
+                      console.error('Unexpected error saving TTS provider preference:', error);
+                    }
+                  }
+                }}
+              >
+                <Text
+                  style={[
+                    styles.providerButtonText,
+                    ttsProvider === 'elevenlabs' && styles.activeProviderButtonText,
+                  ]}
+                >
+                  ElevenLabs TTS
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {ttsProvider === 'google-free' && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.label}>Voice</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.providerButton,
+                      googleFreeVoiceGender === 'female' && styles.activeProviderButton,
+                    ]}
+                    onPress={async () => {
+                      setGoogleFreeVoiceGender('female');
+                      await SecureStorage.setItem('google_free_voice_gender', 'female');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.providerButtonText,
+                        googleFreeVoiceGender === 'female' && styles.activeProviderButtonText,
+                      ]}
+                    >
+                      Female
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.providerButton,
+                      googleFreeVoiceGender === 'male' && styles.activeProviderButton,
+                    ]}
+                    onPress={async () => {
+                      setGoogleFreeVoiceGender('male');
+                      await SecureStorage.setItem('google_free_voice_gender', 'male');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.providerButtonText,
+                        googleFreeVoiceGender === 'male' && styles.activeProviderButtonText,
+                      ]}
+                    >
+                      Male
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {ttsProvider === 'openai' && !apiKey && (
               <View style={{ marginTop: 16 }}>
                 <Text style={[styles.label, { color: '#DC2626' }]}>OpenAI API Key (Required)</Text>
                 <TextInput
@@ -287,7 +614,7 @@ export default function BroadcastScreen() {
                   secureTextEntry
                   onChangeText={(t) => {
                     setApiKey(t);
-                    AsyncStorage.setItem('openai_api_key', t);
+                    SecureStorage.setItem('openai_api_key', t);
                   }}
                 />
               </View>
@@ -312,7 +639,7 @@ export default function BroadcastScreen() {
                     placeholder="https://api.openai.com/v1"
                     onChangeText={(t) => {
                       setBaseUrl(t);
-                      AsyncStorage.setItem('openai_base_url', t);
+                      SecureStorage.setItem('openai_base_url', t);
                     }}
                   />
                   <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>
@@ -327,7 +654,55 @@ export default function BroadcastScreen() {
                     placeholder="tts-1"
                     onChangeText={(t) => {
                       setModel(t);
-                      AsyncStorage.setItem('openai_model', t);
+                      SecureStorage.setItem('openai_model', t);
+                    }}
+                  />
+                </View>
+              </View>
+            )}
+
+            {ttsProvider === 'cambai' && (
+              <View style={{ gap: 12, marginBottom: 16 }}>
+                <View>
+                  <Text style={styles.label}>Camb.ai API Key</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={cambAiKey}
+                    placeholder="x-api-key"
+                    secureTextEntry
+                    onChangeText={async (t) => {
+                      setCambAiKey(t);
+                      await SecureStorage.setItem('cambai_api_key', t);
+                    }}
+                  />
+                </View>
+              </View>
+            )}
+
+            {ttsProvider === 'elevenlabs' && (
+              <View style={{ gap: 12, marginBottom: 16 }}>
+                <View>
+                  <Text style={styles.label}>ElevenLabs API Key</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={elevenLabsKey}
+                    placeholder="xi-..."
+                    secureTextEntry
+                    onChangeText={async (t) => {
+                      setElevenLabsKey(t);
+                      await SecureStorage.setItem('elevenlabs_api_key', t);
+                    }}
+                  />
+                </View>
+                <View>
+                  <Text style={styles.label}>Voice ID</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={elevenLabsVoiceId}
+                    placeholder="21m00Tcm4TlvDq8ikWAM"
+                    onChangeText={async (t) => {
+                      setElevenLabsVoiceId(t);
+                      await SecureStorage.setItem('elevenlabs_voice_id', t);
                     }}
                   />
                 </View>
@@ -397,6 +772,26 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     backgroundColor: '#F3F4F6',
     padding: 16,
+  },
+  providerButton: {
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: 'white',
+    flex: 1,
+    alignItems: 'center',
+  },
+  activeProviderButton: {
+    borderColor: '#4F46E5',
+    backgroundColor: '#EEF2FF',
+  },
+  providerButtonText: {
+    color: '#374151',
+    fontWeight: '500',
+  },
+  activeProviderButtonText: {
+    color: '#4F46E5',
   },
   tabs: {
     flexDirection: 'row',

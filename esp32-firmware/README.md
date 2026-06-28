@@ -2,25 +2,54 @@
 
 ## Hardware Wiring
 
-### DFPlayer Mini
-- **VCC** -> 5V (Important: 3.3V might not be enough for audio)
-- **GND** -> GND
-- **RX**  -> GPIO 17 (TX2 on ESP32)
-- **TX**  -> GPIO 16 (RX2 on ESP32)
-- **SPK1** -> Speaker +
-- **SPK2** -> Speaker -
+### ESP32-S3 (Main Unit)
+- **Buzzer**: GPIO 15
+- **Relay**: GPIO 4
+- **DFPlayer RX**: GPIO 16
+- **DFPlayer TX**: GPIO 17
+- **I2S DOUT**: GPIO 14
+- **I2S BCLK**: GPIO 38
+- **I2S LRC**: GPIO 4
+- **RTC SDA**: GPIO 8
+- **RTC SCL**: GPIO 9
 
-### Status LEDs
-- **WiFi Status (Built-in)**: GPIO 2
-- **Error LED (Optional)**: GPIO 4
+
+
+## Installation
+
+### Option A: PlatformIO (Recommended)
+This project is configured for PlatformIO, which manages dependencies automatically.
+1. Open the folder in VS Code.
+2. Ensure the "PlatformIO IDE" extension is installed.
+3. Select the environment:
+   - `env:esp32_s3` for the ESP32-S3 Main Unit.
+   - `env:esp32_wroom` for the ESP32 WROOM (30-pin DevKit).
+   - `env:esp32_40pin` for the ESP32 40-pin variant.
+4. Click "Upload".
+
+### Option B: Arduino IDE
+If you prefer using Arduino IDE, you must install the following libraries via **Sketch > Include Library > Manage Libraries**:
+
+1. **ArduinoJson** by Benoit Blanchon
+2. **DFRobotDFPlayerMini** by DFRobot
+3. **WiFiManager** by tzapu
+4. **RTClib** by Adafruit
+5. **ESP32-audioI2S** by Schreibfaul1
 
 ## Setup
 
-1. **SD Card**: Format a microSD card as FAT32. Add an MP3 file named `0001.mp3` to the root or `mp3` folder.
-2. **WiFi**: Update `WIFI_SSID` and `WIFI_PASS` in `src/main.cpp`.
-3. **Upload**: 
-   - Open in VS Code with PlatformIO extension.
-   - Click "Upload and Monitor".
+1. **SD Card Setup**: 
+   - Format a microSD card as FAT32.
+   - Naming Convention: Files must be named with 4-digit numbers, e.g., `0001.mp3`, `0002.mp3`.
+   - Place files in the root directory or inside an `mp3` folder.
+   
+2. **Web Dashboard Mapping**:
+   - Upload an MP3 file to the Audio Manager in the web dashboard.
+   - **Crucial**: Edit the "Track Number" in the dashboard to match the file number on the SD card (e.g., set Track Number to `1` for `0001.mp3`).
+   - The ESP32 will receive the track number and play the corresponding file from the SD card.
+
+3. **WiFi**: 
+   - Connect to the `AutoBell-Setup` Access Point on first boot to configure WiFi credentials.
 
 ## Features
 - **WiFi Manager**: Auto-reconnects.

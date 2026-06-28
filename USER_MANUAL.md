@@ -26,7 +26,7 @@ The AutoBell system consists of three parts:
 
 ## 2. Web Dashboard
 
-Access the dashboard at: `https://your-autobell-dashboard-url.com` (Ask your IT admin for the link).
+Access the dashboard at: [https://iobell.web.app/](https://iobell.web.app/)
 
 ### Logging In
 1. Enter your school email and password.
@@ -38,6 +38,7 @@ Access the dashboard at: `https://your-autobell-dashboard-url.com` (Ask your IT 
 3. **Add a Bell:** Click "Add Bell", select the time, days of the week, and the sound to play.
 4. **Edit/Delete:** Click on an existing bell slot to change the time or remove it.
 5. **Save Changes:** Changes are automatically synced to the device within 5 minutes.
+6. **TTS Schedules:** You can also schedule automated Text-To-Speech (TTS) announcements alongside regular bells.
 
 ### Uploading Audio Files
 1. Go to the **Audio Manager** tab.
@@ -52,6 +53,11 @@ Access the dashboard at: `https://your-autobell-dashboard-url.com` (Ask your IT 
 3. Assign roles:
    - **Admin:** Can change schedules and manage users.
    - **Staff:** Can only view schedules and use the mobile app for manual triggers.
+
+### Backup & Restore
+1. Navigate to the **Backup** tab to secure your system data.
+2. You can create a full backup of your database, schedules, logs, and MP3 media files.
+3. In case of data loss or when setting up a new environment, use the **Restore** function to instantly recover your data.
 
 ## 3. Mobile App
 
@@ -74,6 +80,12 @@ Use this when you need to ring the bell outside the schedule (e.g., early dismis
 The device usually runs automatically.
 - **Green Light:** Connected to WiFi and working properly.
 - **Red Light/Blinking:** Error or lost connection. See the Troubleshooting guide.
+
+### Unassigning Devices
+If you need to transfer a device to a different school or account, you can use the **Unassign Device** feature from the dashboard to remove it from your current account.
+
+### Hardware Watchdog
+The AutoBell device is equipped with a hardware watchdog timer. If the device ever freezes or encounters a critical error, it will automatically restart itself to ensure maximum uptime without requiring manual intervention.
 
 ## 5. Support
 For technical issues, contact your IT Department or email support@autobell.com.

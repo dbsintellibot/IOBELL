@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import SecureStorage from '../utils/SecureStorage';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -9,7 +9,6 @@ type AudioFile = {
   name: string;
   storage_path: string;
   duration: number;
-  track_number: number | null;
 };
 
 export default function ManualTriggerScreen() {
@@ -20,7 +19,7 @@ export default function ManualTriggerScreen() {
   const loadCachedData = React.useCallback(async () => {
     if (!schoolId) return;
     try {
-      const cached = await AsyncStorage.getItem(`school_${schoolId}_manual_audioFiles`);
+      const cached = await SecureStorage.getItem(`school_${schoolId}_manual_audioFiles`);
       if (cached) setAudioFiles(JSON.parse(cached));
     } catch (e) {
       console.log(e);
@@ -32,14 +31,13 @@ export default function ManualTriggerScreen() {
     try {
       const { data } = await supabase
         .from('audio_files')
-        .select('id, name, storage_path, duration, track_number')
+        .select('id, name, storage_path, duration')
         .eq('school_id', schoolId)
-        .order('track_number', { ascending: true })
         .order('created_at', { ascending: false });
 
       if (data) {
         setAudioFiles(data as AudioFile[]);
-        AsyncStorage.setItem(`school_${schoolId}_manual_audioFiles`, JSON.stringify(data));
+        SecureStorage.setItem(`school_${schoolId}_manual_audioFiles`, JSON.stringify(data));
       }
     } catch (error) {
       console.error(error);
@@ -72,10 +70,10 @@ export default function ManualTriggerScreen() {
           command: 'RING',
           // Payload isn't used by ESP32 yet for RING, but storing it for context
           payload: { 
+            url: supabase.storage.from('audio-files').getPublicUrl(audio.storage_path).data.publicUrl,
             audio_url: supabase.storage.from('audio-files').getPublicUrl(audio.storage_path).data.publicUrl,
             duration: audio.duration,
-            name: audio.name,
-            track_number: audio.track_number || 1
+            name: audio.name
           },
           status: 'pending'
         }));
@@ -97,11 +95,25 @@ export default function ManualTriggerScreen() {
   };
 
   const renderItem = ({ item }: { item: AudioFile }) => (
-    <TouchableOpacity style={styles.item} onPress={() => playAudio(item)}>
+    <TouchableOpacity
+      style={styles.item}
+      onPress={() =>
+        Alert.alert(
+          'Confirm Manual Trigger',
+          `Continue to play "${item.name}" immediately on all devices in this school?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Continue And Ring Now',
+              style: 'destructive',
+              onPress: () => playAudio(item),
+            },
+          ]
+        )
+      }
+    >
       <Text style={styles.itemText}>
-        {item.track_number 
-          ? `[${String(item.track_number).padStart(3, '0')}] ${item.name}` 
-          : item.name}
+        {item.name}
       </Text>
       <Text style={styles.subText}>{item.duration}s</Text>
     </TouchableOpacity>

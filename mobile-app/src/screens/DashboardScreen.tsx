@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import SecureStorage from '../utils/SecureStorage';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { Bell, Clock, Calendar, Zap, AlertTriangle, LogOut } from 'lucide-react-native';
+import { Clock, Calendar, Zap, AlertTriangle, LogOut } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { AutoBellLogoMark } from '../components/AutoBellLogo';
 
 export default function DashboardScreen() {
   const navigation = useNavigation<any>();
@@ -14,6 +15,7 @@ export default function DashboardScreen() {
   const [nextBell, setNextBell] = useState<string | null>(null);
   const [activeProfile, setActiveProfile] = useState<string>('Loading...');
   const [refreshing, setRefreshing] = useState(false);
+  const [hasOnlineDevice, setHasOnlineDevice] = useState<boolean | null>(null);
 
   // Define fetchDashboardData first so it can be used in useEffect
   const fetchDashboardData = React.useCallback(async () => {
@@ -40,8 +42,8 @@ export default function DashboardScreen() {
       
       // Update state immediately for profile
       setActiveProfile(active.name);
-      AsyncStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, active.name);
-      AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, active.id);
+      SecureStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, active.name);
+      SecureStorage.setItem(`school_${schoolId}_activeProfileId`, active.id);
 
       // 2. Fetch Bells for the target profile
       const today = new Date().getDay();
@@ -69,10 +71,30 @@ export default function DashboardScreen() {
           displayTime = `${hour12}:${m} ${ampm}`;
         }
         setNextBell(displayTime);
-        AsyncStorage.setItem(`school_${schoolId}_dashboard_nextBell`, displayTime);
+        SecureStorage.setItem(`school_${schoolId}_dashboard_nextBell`, displayTime);
       } else {
         setNextBell('No Bells');
-        AsyncStorage.setItem(`school_${schoolId}_dashboard_nextBell`, 'No Bells');
+        SecureStorage.setItem(`school_${schoolId}_dashboard_nextBell`, 'No Bells');
+      }
+
+      const { data: devices } = await supabase
+        .from('bell_devices')
+        .select('status, last_heartbeat')
+        .eq('school_id', schoolId);
+
+      if (devices && devices.length > 0) {
+        const now = Date.now();
+        const online = devices.some((device: { status: string | null; last_heartbeat: string | null }) => {
+          const byStatus = device.status === 'online';
+          const byHeartbeat =
+            device.last_heartbeat != null
+              ? now - new Date(device.last_heartbeat).getTime() <= 5 * 60 * 1000
+              : false;
+          return byStatus || byHeartbeat;
+        });
+        setHasOnlineDevice(online);
+      } else {
+        setHasOnlineDevice(false);
       }
     } catch (e) {
       console.log(e);
@@ -84,8 +106,8 @@ export default function DashboardScreen() {
   const loadCachedData = React.useCallback(async () => {
     if (!schoolId) return;
     try {
-      const cachedProfile = await AsyncStorage.getItem(`school_${schoolId}_dashboard_activeProfile`);
-      const cachedNextBell = await AsyncStorage.getItem(`school_${schoolId}_dashboard_nextBell`);
+      const cachedProfile = await SecureStorage.getItem(`school_${schoolId}_dashboard_activeProfile`);
+      const cachedNextBell = await SecureStorage.getItem(`school_${schoolId}_dashboard_nextBell`);
       if (cachedProfile) setActiveProfile(cachedProfile);
       if (cachedNextBell) setNextBell(cachedNextBell);
     } catch (e) {
@@ -107,14 +129,50 @@ export default function DashboardScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchDashboardData} tintColor="#2563EB" />}
       >
         <Animated.View entering={FadeInDown.delay(100).duration(500)} style={styles.header}>
-          {schoolLogo ? (
-              <Image source={{ uri: schoolLogo }} style={styles.logoImage} />
-          ) : (
-              <View style={styles.headerIcon}>
-              <Bell color="#2563EB" size={28} />
+          <View style={styles.headerLogoWrapper}>
+            <View
+              style={[
+                styles.headerLogoRing,
+                hasOnlineDevice === false && styles.headerLogoRingOffline,
+              ]}
+            >
+              {schoolLogo ? (
+                <Image source={{ uri: schoolLogo }} style={styles.logoImage} />
+              ) : (
+                <View style={styles.headerIcon}>
+                  <AutoBellLogoMark size={28} />
+                </View>
+              )}
+              <View
+                style={[
+                  styles.headerStatusDotOuter,
+                  hasOnlineDevice === false && styles.headerStatusDotOuterOffline,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.headerStatusDotInner,
+                    hasOnlineDevice === false && styles.headerStatusDotInnerOffline,
+                  ]}
+                />
               </View>
-          )}
-          <Text style={styles.schoolName} numberOfLines={1}>{schoolName || 'AutoBell Dashboard'}</Text>
+            </View>
+            <View style={styles.headerTextWrapper}>
+              <Text style={styles.schoolName} numberOfLines={1}>
+                {schoolName || 'AutoBell Dashboard'}
+              </Text>
+              {hasOnlineDevice !== null && (
+                <Text
+                  style={[
+                    styles.headerStatusLabel,
+                    hasOnlineDevice ? styles.headerStatusLabelOnline : styles.headerStatusLabelOffline,
+                  ]}
+                >
+                  {hasOnlineDevice ? 'ONLINE' : 'OFFLINE'}
+                </Text>
+              )}
+            </View>
+          </View>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(200).duration(500)} style={styles.cardContainer}>
@@ -191,6 +249,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerLogoWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerTextWrapper: {
+    flexDirection: 'column',
+  },
+  headerLogoRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#ecfdf3',
+    borderWidth: 2,
+    borderColor: '#22c55e',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  headerLogoRingOffline: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#ef4444',
+  },
+  headerStatusDotOuter: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'rgba(34,197,94,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerStatusDotInner: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#22c55e',
+  },
+  headerStatusDotOuterOffline: {
+    backgroundColor: 'rgba(239,68,68,0.3)',
+  },
+  headerStatusDotInnerOffline: {
+    backgroundColor: '#ef4444',
+  },
   headerIcon: {
     width: 48,
     height: 48,
@@ -216,7 +319,18 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#1e293b',
-    flex: 1,
+  },
+  headerStatusLabel: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  headerStatusLabelOnline: {
+    color: '#16a34a',
+  },
+  headerStatusLabelOffline: {
+    color: '#ef4444',
   },
   cardContainer: {
     marginBottom: 24,

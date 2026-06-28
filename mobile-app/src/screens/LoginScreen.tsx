@@ -13,7 +13,7 @@ import {
   Dimensions
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { Bell, Mail, Lock } from 'lucide-react-native';
+import { Mail, Lock } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { 
   useSharedValue, 
@@ -26,6 +26,7 @@ import Animated, {
   Easing
 } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
+import { AutoBellLogoMark } from '../components/AutoBellLogo';
 
 const { width } = Dimensions.get('window');
 
@@ -135,13 +136,13 @@ export default function LoginScreen() {
           >
             <View style={styles.headerContainer}>
               <Animated.View style={[styles.logoCircle, logoStyle]}>
-                <Bell size={50} color="#fff" />
+                <AutoBellLogoMark size={54} />
               </Animated.View>
               <Animated.Text style={[styles.schoolName, { opacity: logoOpacity }]}>
                 AutoBell
               </Animated.Text>
               <Animated.Text style={[styles.branchName, { opacity: logoOpacity }]}>
-                School Management System
+                Intelligent AI based School Bell and Announcements Management System
               </Animated.Text>
             </View>
 

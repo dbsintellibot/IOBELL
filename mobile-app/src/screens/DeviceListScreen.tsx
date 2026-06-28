@@ -10,6 +10,9 @@ type DeviceRecord = {
   status: string | null;
   mac_address: string | null;
   last_heartbeat: string | null;
+  location_area?: string | null;
+  location_city?: string | null;
+  location_country?: string | null;
 };
 
 export default function DeviceListScreen() {
@@ -94,63 +97,97 @@ export default function DeviceListScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: DeviceRecord }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={styles.deviceInfo}>
-          <Text style={styles.deviceName}>{item.name}</Text>
-          <Text style={styles.macAddress}>{item.mac_address || 'No MAC'}</Text>
-          <Text style={styles.lastSeen}>
-            Last seen: {item.last_heartbeat ? new Date(item.last_heartbeat).toLocaleTimeString() : 'Never'}
-          </Text>
+  const renderItem = ({ item }: { item: DeviceRecord }) => {
+    const confirmAndSendCommand = (
+      command: string,
+      message: string,
+      payload?: Record<string, unknown>
+    ) => {
+      Alert.alert(
+        'Confirm Action',
+        message,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Continue',
+            style: 'destructive',
+            onPress: () => sendCommand(item.id, command, payload),
+          },
+        ]
+      );
+    };
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.deviceInfo}>
+            <Text style={styles.deviceName}>{item.name}</Text>
+            <Text style={styles.macAddress}>{item.mac_address || 'No MAC'}</Text>
+            <Text style={styles.lastSeen}>
+              Last seen: {item.last_heartbeat ? new Date(item.last_heartbeat).toLocaleTimeString() : 'Never'}
+            </Text>
+            <Text style={styles.locationText}>
+              Location:{' '}
+              {item.location_area || item.location_city || item.location_country
+                ? [item.location_area, item.location_city, item.location_country].filter(Boolean).join(', ')
+                : 'Unknown'}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, item.status === 'online' ? styles.statusOnline : styles.statusOffline]}>
+            {item.status === 'online' ? (
+              <Wifi size={14} color="#065F46" />
+            ) : (
+              <WifiOff size={14} color="#991B1B" />
+            )}
+            <Text style={[styles.statusText, item.status === 'online' ? styles.textOnline : styles.textOffline]}>
+              {item.status?.toUpperCase() || 'UNKNOWN'}
+            </Text>
+          </View>
         </View>
-        <View style={[styles.statusBadge, item.status === 'online' ? styles.statusOnline : styles.statusOffline]}>
-          {item.status === 'online' ? (
-            <Wifi size={14} color="#065F46" />
-          ) : (
-            <WifiOff size={14} color="#991B1B" />
-          )}
-          <Text style={[styles.statusText, item.status === 'online' ? styles.textOnline : styles.textOffline]}>
-            {item.status?.toUpperCase() || 'UNKNOWN'}
-          </Text>
+
+        <View style={styles.actionRow}>
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() =>
+              confirmAndSendCommand(
+                'CONFIG',
+                'Continue to refresh configuration for this device? It will pull the latest schedules from the server.'
+              )
+            }
+          >
+            <Settings size={16} color="#2563EB" />
+            <Text style={styles.actionButtonText}>Config</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() =>
+              confirmAndSendCommand(
+                'TEST_BUZZER',
+                'Continue to run a buzzer test on this device? Nearby classrooms will hear a short buzzer sound.'
+              )
+            }
+          >
+            <Bell size={16} color="#F59E0B" />
+            <Text style={[styles.actionButtonText, { color: '#F59E0B' }]}>Buzzer</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() =>
+              confirmAndSendCommand(
+                'REBOOT',
+                'Continue to reboot this device now? Any current audio will stop while the controller restarts.'
+              )
+            }
+          >
+            <RefreshCw size={16} color="#EF4444" />
+            <Text style={[styles.actionButtonText, { color: '#EF4444' }]}>Reboot</Text>
+          </TouchableOpacity>
         </View>
       </View>
-
-      <View style={styles.actionRow}>
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => sendCommand(item.id, 'CONFIG')}
-        >
-          <Settings size={16} color="#2563EB" />
-          <Text style={styles.actionButtonText}>Config</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => sendCommand(item.id, 'TEST_BUZZER')}
-        >
-          <Bell size={16} color="#F59E0B" />
-          <Text style={[styles.actionButtonText, { color: '#F59E0B' }]}>Buzzer</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => sendCommand(item.id, 'TEST_AUDIO', { track_number: 12 })}
-        >
-          <PlayCircle size={16} color="#10B981" />
-          <Text style={[styles.actionButtonText, { color: '#10B981' }]}>Test Audio</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => sendCommand(item.id, 'REBOOT')}
-        >
-          <RefreshCw size={16} color="#EF4444" />
-          <Text style={[styles.actionButtonText, { color: '#EF4444' }]}>Reboot</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -307,6 +344,11 @@ const styles = StyleSheet.create({
   lastSeen: {
     fontSize: 12,
     color: '#9CA3AF',
+    marginTop: 2,
+  },
+  locationText: {
+    fontSize: 12,
+    color: '#6B7280',
     marginTop: 2,
   },
   statusBadge: {

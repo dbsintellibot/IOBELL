@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Wifi, WifiOff, Settings, RefreshCw, Bell } from 'lucide-react'
 import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal'
+import { DeviceSettingsModal } from '../components/DeviceSettingsModal'
 import { useAuth } from '@/hooks/useAuth'
 
 type DeviceRecord = {
@@ -11,15 +12,42 @@ type DeviceRecord = {
   status: string | null
   mac_address: string | null
   last_heartbeat: string | null
+  volume?: number | null
+  input_voltage_mv?: number | null
+  location_area?: string | null
+  location_city?: string | null
+  location_country?: string | null
+}
+
+const ONLINE_TIMEOUT_MS = 5 * 60 * 1000
+
+function resolveDeviceStatus(status: string | null, last_heartbeat: string | null) {
+  if (last_heartbeat) {
+    const last = new Date(last_heartbeat).getTime()
+    if (!Number.isNaN(last)) {
+      const diff = Date.now() - last
+      if (diff <= ONLINE_TIMEOUT_MS) {
+        return { label: 'online', isOnline: true }
+      }
+      return { label: 'offline', isOnline: false }
+    }
+  }
+  if (status) {
+    return { label: status, isOnline: status === 'online' }
+  }
+  return { label: 'unknown', isOnline: false }
 }
 
 export default function BellManagement() {
   const { schoolId } = useAuth()
   const queryClient = useQueryClient()
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [selectedDevice, setSelectedDevice] = useState<DeviceRecord | null>(null)
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null)
 
   const { data: devices, isLoading } = useQuery<DeviceRecord[]>({
-    queryKey: ['devices'],
+    queryKey: ['devices', schoolId],
     queryFn: async () => {
       const { data, error } = await supabase.from('bell_devices').select('*').order('name')
       if (error) {
@@ -28,7 +56,8 @@ export default function BellManagement() {
       }
       return (data ?? []) as DeviceRecord[]
     },
-    refetchInterval: 5000 // Refresh every 5 seconds to catch heartbeats
+    enabled: !!schoolId,
+    refetchInterval: 15000 // Refresh every 15 seconds to catch heartbeats
   })
 
   const registerDeviceMutation = useMutation({
@@ -47,11 +76,13 @@ export default function BellManagement() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setIsRegisterModalOpen(false)
-      alert('Device registered successfully!')
+      setNotification({ type: 'success', message: 'Device registered successfully!' })
+      setTimeout(() => setNotification(null), 3000)
     },
     onError: (error) => {
       console.error('Error registering device:', error)
-      alert(error instanceof Error ? error.message : 'Failed to register device. Please try again.')
+      setNotification({ type: 'error', message: error instanceof Error ? error.message : 'Failed to register device. Please try again.' })
+      setTimeout(() => setNotification(null), 3000)
     }
   })
 
@@ -68,22 +99,28 @@ export default function BellManagement() {
       if (error) throw error
     },
     onSuccess: (_, variables) => {
-      alert(`Command ${variables.command} sent successfully!`)
+      setNotification({ type: 'success', message: `Command ${variables.command} sent successfully!` })
+      setTimeout(() => setNotification(null), 3000)
     },
     onError: (error) => {
       console.error('Error sending command:', error)
-      alert('Failed to send command. Please try again.')
+      const message =
+        error instanceof Error && error.message.includes('Test commands are disabled during quiet hours')
+          ? 'Test commands are disabled during quiet hours.'
+          : 'Failed to send command. Please try again.'
+      setNotification({ type: 'error', message })
+      setTimeout(() => setNotification(null), 3000)
     }
   })
 
   if (isLoading) {
-    return <div className="text-gray-500">Loading devices...</div>
+    return <div className="text-muted-foreground">Loading devices...</div>
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">Bell Management</h2>
+        <h2 className="text-2xl font-bold text-foreground">Bell Management</h2>
         <button 
           onClick={() => setIsRegisterModalOpen(true)}
           className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
@@ -92,85 +129,132 @@ export default function BellManagement() {
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-lg bg-white shadow border">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Device Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">MAC Address</th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Last Seen</th>
-              <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
-            {devices?.length === 0 ? (
-                <tr>
-                    <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
-                        No devices found. Register a new device to get started.
-                    </td>
-                </tr>
-            ) : (
-                devices?.map((device) => (
-                <tr key={device.id}>
-                    <td className="whitespace-nowrap px-6 py-4">
-                    <div className="font-medium text-gray-900">{device.name}</div>
-                    <div className="text-sm text-gray-500">{device.id}</div>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4">
-                    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        device.status === 'online' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                    }`}>
-                        {device.status === 'online' ? (
-                            <Wifi className="mr-1 h-3 w-3" />
-                        ) : (
-                            <WifiOff className="mr-1 h-3 w-3" />
-                        )}
-                        {device.status ? device.status.toUpperCase() : 'UNKNOWN'}
-                    </span>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{device.mac_address}</td>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                        {device.last_heartbeat ? new Date(device.last_heartbeat).toLocaleString() : 'Never'}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                    <button 
-                        onClick={() => sendCommandMutation.mutate({ deviceId: device.id, command: 'CONFIG' })}
-                        className="text-blue-600 hover:text-blue-900 inline-flex items-center mr-4"
-                        disabled={sendCommandMutation.isPending}
-                    >
-                        <Settings className="h-4 w-4 mr-1" />
-                        Sync Config
-                    </button>
-                    <button 
-                        onClick={() => sendCommandMutation.mutate({ deviceId: device.id, command: 'REBOOT' })}
-                        className="text-red-600 hover:text-red-900 inline-flex items-center"
-                        disabled={sendCommandMutation.isPending}
-                    >
-                        <RefreshCw className="h-4 w-4 mr-1" />
-                        Reboot
-                    </button>
-                    <button 
-                        onClick={() => sendCommandMutation.mutate({ deviceId: device.id, command: 'TEST_BUZZER' })}
-                        className="text-orange-600 hover:text-orange-900 inline-flex items-center ml-4"
-                        disabled={sendCommandMutation.isPending}
-                    >
-                        <Bell className="h-4 w-4 mr-1" />
-                        Test Buzzer
-                    </button>
-                    </td>
-                </tr>
-                ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {notification && (
+        <div className={`p-4 rounded-md ${notification.type === 'success' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20' : 'bg-destructive/10 text-destructive dark:text-red-400 border border-destructive/20'}`}>
+          {notification.message}
+        </div>
+      )}
+
+      {(!devices || devices.length === 0) ? (
+        <div className="rounded-lg border border-dashed border-border bg-card text-foreground p-6 text-center text-muted-foreground">
+          No devices found. Register a new device to get started.
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {devices.map((device) => {
+            const statusInfo = resolveDeviceStatus(device.status, device.last_heartbeat)
+            return (
+            <div key={device.id} className="flex h-full flex-col justify-between rounded-lg border bg-card text-foreground p-4 shadow-sm">
+              <div className="space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-medium text-foreground">{device.name || 'Unnamed Device'}</div>
+                    <div className="text-xs text-muted-foreground break-all">{device.id}</div>
+                  </div>
+                  <span
+                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                      statusInfo.isOnline ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-destructive/10 text-destructive dark:text-red-400'
+                    }`}
+                  >
+                    {statusInfo.isOnline ? (
+                      <Wifi className="mr-1 h-3 w-3" />
+                    ) : (
+                      <WifiOff className="mr-1 h-3 w-3" />
+                    )}
+                    {statusInfo.label.toUpperCase()}
+                  </span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  <div className="truncate">MAC: {device.mac_address || 'N/A'}</div>
+                  <div>Last seen: {device.last_heartbeat ? new Date(device.last_heartbeat).toLocaleString() : 'Never'}</div>
+                  <div>
+                    Input power:{' '}
+                    {typeof device.input_voltage_mv === 'number'
+                      ? `${(device.input_voltage_mv / 1000).toFixed(2)} V`
+                      : 'N/A'}
+                  </div>
+                    <div>
+                      Location:{' '}
+                      {device.location_area || device.location_city || device.location_country
+                        ? [device.location_area, device.location_city, device.location_country].filter(Boolean).join(', ')
+                        : 'Unknown'}
+                    </div>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedDevice(device)
+                      setIsSettingsModalOpen(true)
+                    }}
+                    className="inline-flex items-center justify-center rounded-md bg-primary/10 px-3 py-2 text-xs font-medium text-primary hover:bg-primary/20"
+                  >
+                    <Settings className="mr-1 h-4 w-4" />
+                    Settings
+                  </button>
+                  <button
+                    onClick={() => sendCommandMutation.mutate({ deviceId: device.id, command: 'CONFIG' })}
+                    className="inline-flex items-center justify-center rounded-md bg-muted px-3 py-2 text-xs font-medium text-foreground hover:bg-muted/80 disabled:opacity-50"
+                    disabled={sendCommandMutation.isPending}
+                  >
+                    <RefreshCw className="mr-1 h-4 w-4" />
+                    Sync
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => {
+                      const confirmed = window.confirm('Reboot this device now? Current audio will stop and the bell controller will restart.')
+                      if (!confirmed) return
+                      sendCommandMutation.mutate({ deviceId: device.id, command: 'REBOOT' })
+                    }}
+                    className="inline-flex items-center justify-center rounded-md bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive dark:text-red-400 hover:bg-destructive/20 disabled:opacity-50"
+                    disabled={sendCommandMutation.isPending}
+                  >
+                    <RefreshCw className="mr-1 h-4 w-4" />
+                    Reboot
+                  </button>
+                  <button
+                    onClick={() => {
+                      const confirmed = window.confirm('Run a buzzer test on this device? This will briefly ring the buzzer at its location.')
+                      if (!confirmed) return
+                      sendCommandMutation.mutate({ deviceId: device.id, command: 'TEST_BUZZER' })
+                    }}
+                    className="inline-flex items-center justify-center rounded-md bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-500 hover:bg-amber-500/20 disabled:opacity-50"
+                    disabled={sendCommandMutation.isPending}
+                  >
+                    <Bell className="mr-1 h-4 w-4" />
+                    Test Buzzer
+                  </button>
+                </div>
+              </div>
+            </div>
+            )
+          })}
+        </div>
+      )}
       
       <DeviceRegistrationModal 
         isOpen={isRegisterModalOpen}
         onClose={() => setIsRegisterModalOpen(false)}
         onRegister={async (data) => {
           await registerDeviceMutation.mutateAsync(data)
+        }}
+      />
+
+      <DeviceSettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => {
+          setIsSettingsModalOpen(false)
+          setSelectedDevice(null)
+        }}
+        device={selectedDevice}
+        onUpdate={() => {
+          queryClient.invalidateQueries({ queryKey: ['devices'] })
+          setNotification({ type: 'success', message: 'Device settings updated successfully!' })
+          setTimeout(() => setNotification(null), 3000)
         }}
       />
     </div>

@@ -1,0 +1,567 @@
+import { useState, useEffect } from 'react'
+import { useAuth } from '@/hooks/useAuth'
+import { supabase } from '@/lib/supabase'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Save, Upload, Building, MapPin, Check, Download, ShieldAlert, CheckCircle, RefreshCw } from 'lucide-react'
+import { themes, type ThemeName } from '@/lib/themes'
+import { AutoBellLogoMark } from '@/components/AutoBellLogo'
+import { generateSchoolBackup, restoreSchoolBackup } from '@/lib/backupService'
+type SchoolSettingsRow = {
+  name: string | null
+  campus_name: string | null
+  address: string | null
+  logo_url: string | null
+  theme_color: ThemeName | string | null
+  theme_mode?: 'dark' | 'light' | 'grey' | string | null
+  quiet_hours_enabled?: boolean | null
+  quiet_hours_disable_from?: string | null
+  quiet_hours_enable_at?: string | null
+}
+
+  const [restoring, setRestoring] = useState(false)
+  const [progressStage, setProgressStage] = useState('')
+  const [progressVal, setProgressVal] = useState(0)
+  const [overwrite, setOverwrite] = useState(false)
+  const [status, setStatus] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  
+  const handleExport = async () => {
+    try {
+      setStatus({ type: 'success', text: 'Generating backup...' })
+      await generateSchoolBackup(schoolId, schoolName, userId)
+      setStatus({ type: 'success', text: 'Backup downloaded!' })
+    } catch (e: any) {
+      setStatus({ type: 'error', text: e.message || 'Backup failed.' })
+    }
+  }
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const confirmMsg = overwrite 
+      ? 'WARNING: This will completely replace your active schedules, device profiles, and audio logs. Are you sure you want to proceed?'
+      : 'Are you sure you want to merge these backup settings into your current school settings?'
+    
+    if (!window.confirm(confirmMsg)) return
+
+    setRestoring(true)
+    setStatus(null)
+    try {
+      const result = await restoreSchoolBackup(file, schoolId, overwrite, (stage, percent) => {
+        setProgressStage(stage)
+        setProgressVal(percent)
+      })
+      
+      setStatus({
+        type: 'success',
+        text: `Successfully restored! Devices: ${result.devices_restored}, Profiles: ${result.profiles_restored}, Schedules: ${result.bell_times_restored}.`
+      })
+    } catch (err: any) {
+      console.error(err)
+      setStatus({ type: 'error', text: err.message || 'Restore failed.' })
+    } finally {
+      setRestoring(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6 rounded-2xl bg-white p-6 shadow sm:rounded-md border border-gray-200">
+      <div>
+        <h3 className="text-lg font-medium leading-6 text-gray-900">Data Backup & Recovery</h3>
+        <p className="text-sm text-gray-600 mt-1">
+          Export your schedules, devices configuration, and audio directories, or upload a backup file to restore them.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Backup Box */}
+        <div className="p-5 rounded-xl bg-gray-50 border border-gray-200 flex flex-col justify-between">
+          <div>
+            <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Download className="h-5 w-5 text-blue-600" /> Export School Backup
+            </h4>
+            <p className="text-xs text-gray-600 mt-2">
+              Downloads a compressed archive (.abk) containing:
+            </p>
+            <ul className="list-disc pl-5 mt-2 text-xs space-y-1 text-gray-600">
+              <li>Active schedules, time rules, and TTS schedules</li>
+              <li>Registered bells, volumes, locations, and status records</li>
+              <li>All local MP3 audio files & custom voice notes</li>
+              <li>Theme config and branding parameters</li>
+            </ul>
+          </div>
+          <button
+            onClick={handleExport}
+            className="mt-6 flex w-full justify-center items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition"
+          >
+            Generate & Download Backup
+          </button>
+        </div>
+
+        {/* Restore Box */}
+        <div className="p-5 rounded-xl bg-gray-50 border border-gray-200 flex flex-col justify-between">
+          <div>
+            <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Upload className="h-5 w-5 text-emerald-600" /> Import Backup Settings
+            </h4>
+            <div className="mt-4 flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="overwriteCheck"
+                checked={overwrite}
+                onChange={(e) => setOverwrite(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600"
+              />
+              <label htmlFor="overwriteCheck" className="text-xs font-medium text-amber-600 flex items-center gap-1.5 cursor-pointer">
+                <ShieldAlert className="h-4 w-4" /> Overwrite mode (clears active schedules)
+              </label>
+            </div>
+            <p className="text-xs text-gray-600 mt-3">
+              Upload a valid autobell_backup.abk file to recover school records.
+            </p>
+          </div>
+
+          <div className="mt-6">
+            {restoring ? (
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-semibold">
+                  <span className="text-gray-600 flex items-center gap-2">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-emerald-600" /> {progressStage}
+                  </span>
+                  <span>{progressVal}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="bg-emerald-500 h-2 rounded-full transition-all duration-300" style={{ width: `${progressVal}%` }}></div>
+                </div>
+              </div>
+            ) : (
+              <label className="flex w-full cursor-pointer justify-center items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition">
+                <span>Upload & Restore Backup</span>
+                <input type="file" accept=".abk,.zip" onChange={handleImport} className="hidden" />
+              </label>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {status && (
+        <div className={`mt-4 p-3 rounded-lg flex items-start gap-2.5 border text-xs ${
+          status.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'
+        }`}>
+          {status.type === 'success' && <CheckCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />}
+          <span>{status.text}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function SchoolSettings() {
+  const { schoolId, role, user } = useAuth()
+  const queryClient = useQueryClient()
+  const [name, setName] = useState('')
+  const [campusName, setCampusName] = useState('')
+  const [address, setAddress] = useState('')
+  const [themeColor, setThemeColor] = useState<ThemeName>('slate')
+  const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'grey'>('dark')
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState(false)
+  const [quietHoursDisableFrom, setQuietHoursDisableFrom] = useState('21:00')
+  const [quietHoursEnableAt, setQuietHoursEnableAt] = useState('07:00')
+  const [uploading, setUploading] = useState(false)
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null)
+  const canEdit = role === 'admin'
+
+  // Fetch School Data
+  const { data: school, isLoading } = useQuery<SchoolSettingsRow | null>({
+    queryKey: ['school_settings', schoolId],
+    enabled: !!schoolId,
+    queryFn: async () => {
+      const fullQuery = await supabase
+        .from('schools')
+        .select('name, campus_name, address, logo_url, theme_color, theme_mode, quiet_hours_enabled, quiet_hours_disable_from, quiet_hours_enable_at')
+        .eq('id', schoolId)
+        .single()
+      
+      if (!fullQuery.error) return fullQuery.data as SchoolSettingsRow
+
+      const fallbackQuery = await supabase
+        .from('schools')
+        .select('name, campus_name, address, logo_url, theme_color')
+        .eq('id', schoolId)
+        .single()
+
+      if (fallbackQuery.error) throw fallbackQuery.error
+      return fallbackQuery.data as SchoolSettingsRow
+    }
+  })
+
+  // Sync state with fetched data
+  useEffect(() => {
+    if (school) {
+      setName(school.name || '')
+      setCampusName(school.campus_name || '')
+      setAddress(school.address || '')
+      setThemeColor((school.theme_color as ThemeName) || 'slate')
+      setThemeMode((school.theme_mode as 'dark' | 'light' | 'grey') || 'dark')
+      setLogoUrl(school.logo_url)
+      setQuietHoursEnabled(!!school.quiet_hours_enabled)
+      setQuietHoursDisableFrom((school.quiet_hours_disable_from || '21:00').slice(0, 5))
+      setQuietHoursEnableAt((school.quiet_hours_enable_at || '07:00').slice(0, 5))
+    }
+  }, [school])
+
+  // Update Mutation
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!schoolId) return
+      if (!canEdit) return
+
+      const updates = {
+        name,
+        campus_name: campusName,
+        address,
+        theme_color: themeColor,
+        theme_mode: themeMode,
+        logo_url: logoUrl,
+        quiet_hours_enabled: quietHoursEnabled,
+        quiet_hours_disable_from: quietHoursDisableFrom,
+        quiet_hours_enable_at: quietHoursEnableAt,
+        updated_at: new Date().toISOString(),
+      }
+
+      const { error } = await supabase
+        .from('schools')
+        .update(updates)
+        .eq('id', schoolId)
+
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['school_settings', schoolId] })
+      queryClient.invalidateQueries({ queryKey: ['school_name', schoolId] }) // Refresh layout
+      queryClient.invalidateQueries({ queryKey: ['school_theme', schoolId] }) // Refresh theme
+      if (canEdit) {
+        setNotification({ type: 'success', message: 'School settings updated successfully!' })
+      }
+      setTimeout(() => setNotification(null), 3000)
+    },
+    onError: (error) => {
+      console.error('Error updating settings:', error)
+      setNotification({ type: 'error', message: 'Failed to update settings.' })
+      setTimeout(() => setNotification(null), 3000)
+    }
+  })
+
+  // File Upload Handler
+  const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      setUploading(true)
+      if (!event.target.files || event.target.files.length === 0) {
+        throw new Error('You must select an image to upload.')
+      }
+
+      const file = event.target.files[0]
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${schoolId}/logo.${fileExt}` // Overwrite existing logo or standard name
+      const filePath = `${fileName}`
+
+      // Upload to 'school-branding' bucket
+      const { error: uploadError } = await supabase.storage
+        .from('school-branding')
+        .upload(filePath, file, { upsert: true })
+
+      if (uploadError) {
+        throw uploadError
+      }
+
+      // Get Public URL
+      const { data } = supabase.storage
+        .from('school-branding')
+        .getPublicUrl(filePath)
+
+      // Add timestamp to force refresh cache
+      setLogoUrl(`${data.publicUrl}?t=${new Date().getTime()}`)
+
+    } catch (error) {
+      console.error('Error uploading logo:', error)
+      setNotification({ type: 'error', message: 'Error uploading logo!' })
+      setTimeout(() => setNotification(null), 3000)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  if (isLoading) return <div>Loading...</div>
+
+  return (
+    <div className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
+      {notification && (
+        <div className={`mb-4 p-4 rounded-md ${notification.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {notification.message}
+        </div>
+      )}
+      <div className="md:grid md:grid-cols-3 md:gap-6">
+        <div className="md:col-span-1">
+          <div className="px-4 sm:px-0">
+            <h3 className="text-lg font-medium leading-6 text-gray-900">School Branding</h3>
+            <p className="mt-1 text-sm text-gray-600">
+              Update your school's identity. This information will be displayed on the Web Dashboard and Mobile App.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 md:mt-0 md:col-span-2">
+          <div className="shadow sm:rounded-md sm:overflow-hidden">
+            <div className="px-4 py-5 bg-white space-y-6 sm:p-6">
+              
+              {/* Logo Upload */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700">School Logo</label>
+                <div className="mt-1 flex items-center">
+                  {logoUrl ? (
+                    <img
+                      className="h-20 w-20 rounded-full object-contain bg-gray-50 border"
+                      src={logoUrl}
+                      alt="School Logo"
+                    />
+                  ) : (
+                    <span className="h-20 w-20 rounded-full overflow-hidden bg-gray-100 flex items-center justify-center">
+                      <AutoBellLogoMark className="h-12 w-12" />
+                    </span>
+                  )}
+                  <div className="ml-5">
+                    <label
+                      htmlFor="logo-upload"
+                      className="bg-white py-2 px-3 border border-gray-300 rounded-md shadow-sm text-sm leading-4 font-medium text-gray-700 hover:bg-gray-50 focus:outline-none cursor-pointer flex items-center"
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      {uploading ? 'Uploading...' : 'Change Logo'}
+                    </label>
+                    <input
+                      id="logo-upload"
+                      name="logo-upload"
+                      type="file"
+                      className="sr-only"
+                      accept="image/*"
+                      onChange={handleLogoUpload}
+                      disabled={uploading}
+                    />
+                    <p className="mt-2 text-xs text-gray-500">PNG, JPG, GIF up to 2MB</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* School Name */}
+              <div className="grid grid-cols-6 gap-6">
+                <div className="col-span-6 sm:col-span-4">
+                  <label htmlFor="school-name" className="block text-sm font-medium text-gray-700">
+                    School Name
+                  </label>
+                  <div className="mt-1 flex rounded-md shadow-sm">
+                    <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">
+                      <Building className="h-4 w-4" />
+                    </span>
+                    <input
+                      type="text"
+                      name="school-name"
+                      id="school-name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="focus:ring-blue-500 focus:border-blue-500 flex-1 block w-full rounded-none rounded-r-md sm:text-sm border-gray-300 p-2 border"
+                      placeholder="Lincoln High School"
+                    />
+                  </div>
+                </div>
+
+                <div className="col-span-6 sm:col-span-4">
+                  <label htmlFor="campus-name" className="block text-sm font-medium text-gray-700">
+                    Campus Name
+                  </label>
+                  <div className="mt-1 flex rounded-md shadow-sm">
+                    <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">
+                      <Building className="h-4 w-4" />
+                    </span>
+                    <input
+                      type="text"
+                      name="campus-name"
+                      id="campus-name"
+                      value={campusName}
+                      onChange={(e) => setCampusName(e.target.value)}
+                      className="focus:ring-blue-500 focus:border-blue-500 flex-1 block w-full rounded-none rounded-r-md sm:text-sm border-gray-300 p-2 border"
+                      placeholder="Main Campus"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Address */}
+              <div>
+                <label htmlFor="address" className="block text-sm font-medium text-gray-700">
+                  Address
+                </label>
+                <div className="mt-1 flex rounded-md shadow-sm">
+                   <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">
+                      <MapPin className="h-4 w-4" />
+                    </span>
+                  <input
+                    id="address"
+                    name="address"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    className="focus:ring-blue-500 focus:border-blue-500 flex-1 block w-full rounded-none rounded-r-md sm:text-sm border-gray-300 p-2 border"
+                    placeholder="123 Main St, Springfield"
+                  />
+                </div>
+                <p className="mt-2 text-sm text-gray-500">
+                  This will be displayed as the branch or location name.
+                </p>
+              </div>
+
+              {/* Theme Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Theme Mode</label>
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3 max-w-md">
+                  <button
+                    type="button"
+                    onClick={() => setThemeMode('dark')}
+                    disabled={!canEdit}
+                    className={`rounded-lg border px-4 py-3 text-left text-sm font-medium shadow-sm disabled:opacity-50 ${
+                      themeMode === 'dark'
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    Dark
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setThemeMode('light')}
+                    disabled={!canEdit}
+                    className={`rounded-lg border px-4 py-3 text-left text-sm font-medium shadow-sm disabled:opacity-50 ${
+                      themeMode === 'light'
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    Light
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setThemeMode('grey')}
+                    disabled={!canEdit}
+                    className={`rounded-lg border px-4 py-3 text-left text-sm font-medium shadow-sm disabled:opacity-50 ${
+                      themeMode === 'grey'
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    Grey
+                  </button>
+                </div>
+                <p className="mt-2 text-sm text-gray-500">
+                  Choose the overall dashboard style (background + surfaces). Theme Color controls the primary accent.
+                </p>
+
+                <label className="block text-sm font-medium text-gray-700">Theme Color</label>
+                <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-6">
+                  {themes.map((theme) => (
+                    <div
+                      key={theme.name}
+                      onClick={() => setThemeColor(theme.name)}
+                      className={`
+                        relative flex cursor-pointer items-center justify-center rounded-lg border p-4 shadow-sm hover:border-gray-400 focus:outline-none
+                        ${themeColor === theme.name ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50' : 'bg-white border-gray-200'}
+                      `}
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <div className={`h-8 w-8 rounded-full ${theme.activeColor} shadow-sm border border-black/10`} />
+                        <span className="text-xs font-medium text-gray-900">{theme.label}</span>
+                      </div>
+                      {themeColor === theme.name && (
+                        <div className="absolute top-1 right-1">
+                          <Check className="h-4 w-4 text-blue-600" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-sm text-gray-500">
+                  Select a color theme for your dashboard.
+                </p>
+              </div>
+
+              {/* Quiet Hours */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">Quiet Hours</h4>
+                <p className="mt-1 text-sm text-gray-600">
+                  During quiet hours no sound will be played (bell MP3, broadcasts, TTS, voice notes, and tests).
+                </p>
+                {!canEdit && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    Only School Admins can change Quiet Hours.
+                  </p>
+                )}
+
+                <div className="mt-4 space-y-4 max-w-md">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={quietHoursEnabled}
+                      onChange={(event) => setQuietHoursEnabled(event.target.checked)}
+                      disabled={!canEdit}
+                    />
+                    Enable quiet hours
+                  </label>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Disable from</label>
+                      <input
+                        type="time"
+                        value={quietHoursDisableFrom}
+                        onChange={(event) => setQuietHoursDisableFrom(event.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                        required={quietHoursEnabled}
+                        disabled={!canEdit}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Enable at</label>
+                      <input
+                        type="time"
+                        value={quietHoursEnableAt}
+                        onChange={(event) => setQuietHoursEnableAt(event.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                        required={quietHoursEnabled}
+                        disabled={!canEdit}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-gray-500">
+                    Quiet hours apply every day. Windows that cross midnight (e.g. 21:00 to 07:00) are supported.
+                  </div>
+                </div>
+              </div>
+
+            </div>
+            <div className="px-4 py-3 bg-gray-50 text-right sm:px-6">
+              <button
+                onClick={() => updateMutation.mutate()}
+                disabled={!canEdit || updateMutation.isPending || uploading}
+                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+              >
+                <Save className="h-4 w-4 mr-2" />
+                {updateMutation.isPending ? 'Saving...' : 'Save Settings'}
+              </button>
+            </div>
+          </div>
+          
+          <div className="mt-8">
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

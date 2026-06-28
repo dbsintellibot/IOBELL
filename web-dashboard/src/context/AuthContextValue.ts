@@ -8,6 +8,8 @@ export type AuthContextType = {
   user: User | null
   schoolId: string | null
   role: AuthRole
+  ttsEnabled: boolean
+  otaEnabled: boolean
   loading: boolean
   signOut: () => Promise<void>
 }

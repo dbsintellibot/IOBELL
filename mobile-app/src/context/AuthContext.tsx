@@ -23,6 +23,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [schoolLogo, setSchoolLogo] = useState<string | null>(null);
   const [schoolAddress, setSchoolAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -51,7 +52,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
         const { data: userData, error } = await supabase
             .from('users')
-            .select('school_id')
+            .select('school_id, tts_enabled')
             .eq('id', userId)
             .single();
         
@@ -59,6 +60,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.error('Error fetching school ID:', error);
         }
         
+        if (userData) {
+            setTtsEnabled(!!userData.tts_enabled);
+        } else {
+            setTtsEnabled(false);
+        }
+
         if (userData && userData.school_id) {
             setSchoolId(userData.school_id);
             

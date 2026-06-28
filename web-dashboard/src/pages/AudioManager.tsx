@@ -23,14 +23,21 @@ export default function AudioManager() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const { schoolId } = useAuth()
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null)
 
-  const { data: files = [] } = useQuery<AudioFileItem[]>({
-    queryKey: ['audio_files'],
+  const { data: files = [], isError, error } = useQuery<AudioFileItem[]>({
+    queryKey: ['audio_files', schoolId],
+    enabled: !!schoolId,
     queryFn: async () => {
-        const { data, error } = await supabase.from('audio_files').select('*').order('created_at', { ascending: false })
+        const { data, error } = await supabase
+          .from('audio_files')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .abortSignal(AbortSignal.timeout(10000)) // 10 second timeout
+
         if (error) {
-            console.warn("Error fetching audio files:", error)
-            return []
+            console.error("Error fetching audio files:", error)
+            throw error
         }
         
         const records = (data ?? []) as AudioFileRecord[]
@@ -62,7 +69,6 @@ export default function AudioManager() {
 
         if (uploadError) throw uploadError
 
-        // 2. Insert metadata into database
         const { error: dbError } = await supabase
           .from('audio_files')
           .insert({
@@ -80,10 +86,13 @@ export default function AudioManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['audio_files'] })
+      setNotification({ type: 'success', message: 'Audio file uploaded successfully' })
+      setTimeout(() => setNotification(null), 3000)
     },
     onError: (error) => {
       console.error('Upload failed:', error)
-      alert('Failed to upload audio file')
+      setNotification({ type: 'error', message: 'Failed to upload audio file' })
+      setTimeout(() => setNotification(null), 3000)
     }
   })
 
@@ -109,10 +118,13 @@ export default function AudioManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['audio_files'] })
+      setNotification({ type: 'success', message: 'Audio file deleted successfully' })
+      setTimeout(() => setNotification(null), 3000)
     },
     onError: (error) => {
       console.error('Delete failed:', error)
-      alert('Failed to delete audio file')
+      setNotification({ type: 'error', message: 'Failed to delete audio file' })
+      setTimeout(() => setNotification(null), 3000)
     }
   })
 
@@ -144,7 +156,12 @@ export default function AudioManager() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">Audio Manager</h2>
+        <h2 className="text-2xl font-bold text-foreground">Audio Manager</h2>
+        {isError && (
+          <div className="text-sm text-destructive dark:text-red-400">
+            Error loading files: {error instanceof Error ? error.message : 'Unknown error'}
+          </div>
+        )}
         <input
             type="file"
             ref={fileInputRef}
@@ -162,17 +179,26 @@ export default function AudioManager() {
         </button>
       </div>
 
+      {notification && (
+        <div className={`p-4 rounded-md ${notification.type === 'success' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20' : 'bg-destructive/10 text-destructive dark:text-red-400 border border-destructive/20'}`}>
+          {notification.message}
+        </div>
+      )}
+
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {files.map((file) => (
-          <div key={file.id} className="relative flex flex-col justify-between rounded-lg border bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
+          <div key={file.id} className="relative flex flex-col justify-between rounded-lg border bg-card text-foreground p-6 shadow-sm hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between">
               <div className="flex items-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-600">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                   <Music className="h-5 w-5" />
                 </div>
-                <div className="ml-4">
-                  <h3 className="text-sm font-medium text-gray-900 truncate max-w-[150px]" title={file.name}>{file.name}</h3>
-                  <p className="text-xs text-gray-500">{file.size} • {new Date(file.created_at).toLocaleDateString()}</p>
+                <div className="ml-4 flex-1">
+                  <h3 className="text-sm font-medium text-foreground truncate max-w-[150px]" title={file.name}>{file.name}</h3>
+                  <p className="text-xs text-muted-foreground">{file.size} • {new Date(file.created_at).toLocaleDateString()}</p>
+                  
+                  <div className="mt-2 flex items-center gap-2">
+                  </div>
                 </div>
               </div>
             </div>
@@ -180,13 +206,13 @@ export default function AudioManager() {
             <div className="mt-6 flex items-center justify-between">
               <button 
                 onClick={() => handlePlay(file.id, file.url)}
-                className="flex items-center rounded-full bg-gray-100 p-2 text-gray-600 hover:bg-gray-200"
+                className="flex items-center rounded-full bg-muted p-2 text-muted-foreground hover:bg-muted/80 hover:text-foreground"
               >
                 {playing === file.id ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
               </button>
               <button 
                 onClick={() => deleteMutation.mutate(file)}
-                className="text-red-500 hover:text-red-700"
+                className="text-destructive hover:text-destructive/80"
               >
                 <Trash2 className="h-5 w-5" />
               </button>
@@ -197,13 +223,13 @@ export default function AudioManager() {
         {/* Upload Placeholder */}
         <div 
             onClick={() => fileInputRef.current?.click()}
-            className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-6 text-center hover:border-gray-400 cursor-pointer"
+            className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-input p-6 text-center hover:border-muted-foreground cursor-pointer"
         >
-            <Upload className="h-10 w-10 text-gray-400" />
-            <span className="mt-2 block text-sm font-medium text-gray-900">
+            <Upload className="h-10 w-10 text-muted-foreground" />
+            <span className="mt-2 block text-sm font-medium text-foreground">
                 Drop audio files here
             </span>
-             <span className="mt-1 block text-sm text-gray-500">
+             <span className="mt-1 block text-sm text-muted-foreground">
                 or click to select
             </span>
         </div>

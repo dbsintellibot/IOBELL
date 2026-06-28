@@ -9,11 +9,11 @@ export default function EmergencyScreen() {
   const handlePress = () => {
     Alert.alert(
       'CONFIRM EMERGENCY',
-      'Are you sure you want to broadcast the emergency alarm to ALL devices?',
+      'Pressing continue will broadcast the emergency alarm to ALL devices in this school immediately.',
       [
         { text: 'Cancel', style: 'cancel' },
         { 
-          text: 'BROADCAST', 
+          text: 'Continue And Broadcast Alarm', 
           style: 'destructive', 
           onPress: triggerEmergency 
         },
@@ -44,7 +44,8 @@ export default function EmergencyScreen() {
           command: 'RING', 
           payload: { 
             message: 'EMERGENCY TRIGGERED',
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            quiet_hours_override: true
           },
           status: 'pending'
         }));

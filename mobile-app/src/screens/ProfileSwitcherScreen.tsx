@@ -3,7 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, ActivityIndi
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import SecureStorage from '../utils/SecureStorage';
 import { Check, Calendar, ArrowRight } from 'lucide-react-native';
 
 type Profile = {
@@ -31,11 +31,11 @@ export default function ProfileSwitcherScreen() {
       if (data) {
         setActiveProfileId(data.id);
         // Update cache for offline fallback
-        AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, data.id);
+        SecureStorage.setItem(`school_${schoolId}_activeProfileId`, data.id);
       }
     } catch {
       // If DB fetch fails, fall back to cache
-      const id = await AsyncStorage.getItem(`school_${schoolId}_activeProfileId`);
+      const id = await SecureStorage.getItem(`school_${schoolId}_activeProfileId`);
       setActiveProfileId(id);
     }
   }, [schoolId]);
@@ -85,8 +85,8 @@ export default function ProfileSwitcherScreen() {
 
       // 2. Update Local State & Cache
       setActiveProfileId(profile.id);
-      await AsyncStorage.setItem(`school_${schoolId}_activeProfileId`, profile.id);
-      await AsyncStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, profile.name);
+      await SecureStorage.setItem(`school_${schoolId}_activeProfileId`, profile.id);
+      await SecureStorage.setItem(`school_${schoolId}_dashboard_activeProfile`, profile.name);
 
       // 3. Trigger ESP32 Sync via Command Queue
       const { data: devices } = await supabase
@@ -114,12 +114,27 @@ export default function ProfileSwitcherScreen() {
     }
   };
 
+  const confirmActivateProfile = (profile: Profile) => {
+    Alert.alert(
+      'Change Active Profile',
+      `Continue to switch the active profile to "${profile.name}" and push this schedule to all devices?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue And Switch Profile',
+          style: 'destructive',
+          onPress: () => activateProfile(profile),
+        },
+      ]
+    );
+  };
+
   const renderItem = ({ item }: { item: Profile }) => {
     const isActive = item.id === activeProfileId;
     return (
       <TouchableOpacity 
         style={[styles.item, isActive && styles.activeItem]} 
-        onPress={() => activateProfile(item)}
+        onPress={() => confirmActivateProfile(item)}
       >
         <View style={styles.itemContent}>
           <View style={[styles.iconContainer, isActive ? styles.activeIcon : styles.inactiveIcon]}>

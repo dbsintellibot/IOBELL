@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
-import { Play, Pause, Trash2, Upload, Edit2, X, Save } from 'lucide-react-native';
+import { Play, Pause, Trash2, Upload, Edit2, X, Save, Music } from 'lucide-react-native';
 
 type AudioFileRecord = {
   id: string;
@@ -13,7 +13,6 @@ type AudioFileRecord = {
   created_at: string;
   duration: number | null;
   school_id: string;
-  track_number: number | null;
 };
 
 type AudioFileItem = AudioFileRecord & {
@@ -29,12 +28,6 @@ export default function AudioManagerScreen() {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
 
-  // Edit Modal State
-  const [modalVisible, setModalVisible] = useState(false);
-  const [editingFile, setEditingFile] = useState<AudioFileItem | null>(null);
-  const [newTrackNumber, setNewTrackNumber] = useState('');
-  const [savingTrack, setSavingTrack] = useState(false);
-
   const fetchFiles = React.useCallback(async () => {
     if (!schoolId) return;
     setLoading(true);
@@ -43,7 +36,6 @@ export default function AudioManagerScreen() {
         .from('audio_files')
         .select('*')
         .eq('school_id', schoolId)
-        .order('track_number', { ascending: true })
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -198,47 +190,11 @@ export default function AudioManagerScreen() {
     );
   };
 
-  const openEditModal = (file: AudioFileItem) => {
-    setEditingFile(file);
-    setNewTrackNumber(file.track_number?.toString() || '');
-    setModalVisible(true);
-  };
-
-  const saveTrackNumber = async () => {
-    if (!editingFile || !schoolId) return;
-    
-    setSavingTrack(true);
-    try {
-      const trackNum = parseInt(newTrackNumber);
-      if (isNaN(trackNum)) {
-        Alert.alert('Error', 'Please enter a valid number');
-        setSavingTrack(false);
-        return;
-      }
-
-      const { error } = await supabase
-        .from('audio_files')
-        .update({ track_number: trackNum })
-        .eq('id', editingFile.id)
-        .eq('school_id', schoolId);
-
-      if (error) throw error;
-
-      setModalVisible(false);
-      fetchFiles();
-    } catch (error) {
-      console.error('Error updating track number:', error);
-      Alert.alert('Error', 'Failed to update track number');
-    } finally {
-      setSavingTrack(false);
-    }
-  };
-
   const renderItem = ({ item }: { item: AudioFileItem }) => (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.iconContainer}>
-          <Text style={styles.trackNumber}>{item.track_number || '#'}</Text>
+          <Music color="#2563EB" size={20} />
         </View>
         <View style={styles.fileInfo}>
           <Text style={styles.fileName} numberOfLines={1}>{item.name}</Text>
@@ -247,13 +203,6 @@ export default function AudioManagerScreen() {
       </View>
       
       <View style={styles.cardActions}>
-        <TouchableOpacity 
-          onPress={() => openEditModal(item)}
-          style={styles.actionButton}
-        >
-          <Edit2 color="#4B5563" size={20} />
-        </TouchableOpacity>
-
         <TouchableOpacity 
           onPress={() => handlePlay(item.id, item.url)}
           style={styles.actionButton}
@@ -312,57 +261,6 @@ export default function AudioManagerScreen() {
           }
         />
       )}
-
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.modalOverlay}
-        >
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Edit Track Number</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <X size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.modalBody}>
-              <Text style={styles.modalLabel}>Track Number (001-255)</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={newTrackNumber}
-                onChangeText={setNewTrackNumber}
-                keyboardType="numeric"
-                placeholder="Enter track number"
-                autoFocus
-              />
-              <Text style={styles.modalHelp}>
-                This number is used to order files on the SD card.
-              </Text>
-            </View>
-
-            <TouchableOpacity 
-              style={styles.modalSaveButton}
-              onPress={saveTrackNumber}
-              disabled={savingTrack}
-            >
-              {savingTrack ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <>
-                  <Save size={18} color="#fff" />
-                  <Text style={styles.modalSaveText}>Save Changes</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </View>
   );
 }

@@ -52,6 +52,15 @@ The device has two LEDs:
 1. Ensure you are using the correct email.
 2. Ask an admin to reset your password or verify your account is active.
 
+### 5. Device Randomly Restarts
+**Symptoms:** The device reboots unexpectedly during operation.
+**Possible Causes:**
+- The hardware watchdog detected a system freeze or memory leak and automatically restarted the device to ensure continued operation.
+- Power supply instability (voltage drops).
+**Fixes:**
+1. This is normal behavior if the device encountered a temporary glitch, as the watchdog ensures 100% uptime without manual intervention.
+2. If it happens frequently, check your power supply (ensure it provides a stable 5V/2A) or check the dashboard for any error logs.
+
 ## Advanced Maintenance
 
 ### Reconfiguring WiFi
