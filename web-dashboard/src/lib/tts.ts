@@ -12,19 +12,40 @@ export async function generateSecureTTS(
   })
 
   if (error) {
-    throw new Error(error.message || `Failed to generate speech via secure endpoint for ${provider}`)
+    let detailMsg = error.message;
+
+    // Attempt to extract detailed error message from response context body
+    if ((error as any).context && typeof (error as any).context.text === 'function') {
+      try {
+        const bodyText = await (error as any).context.text();
+        const parsed = JSON.parse(bodyText);
+        if (parsed?.error) detailMsg = parsed.error;
+      } catch (_) {
+        // preserve default message
+      }
+    }
+
+    // If a custom provider (e.g. openai) failed, automatically fallback to google-free
+    if (provider !== 'google-free') {
+      console.warn(`Provider ${provider} failed (${detailMsg}). Falling back to Google Free TTS...`);
+      return generateSecureTTS('google-free', text, settings);
+    }
+
+    throw new Error(detailMsg || `Failed to generate speech via secure endpoint for ${provider}`)
   }
 
-  if (!(data instanceof Blob)) {
-     throw new Error('Invalid response from secure endpoint')
+  if (data instanceof Blob) {
+    return data;
+  } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+    return new Blob([data as BlobPart], { type: 'audio/mpeg' });
   }
-  
-  return data;
+
+  throw new Error('Invalid response from secure endpoint');
 }
 
 export async function generateTTS(
   text: string, 
-  apiKey: string, // Kept for signature compatibility, but ignored
+  _apiKey: string, // Kept for signature compatibility, but ignored
   baseUrl: string = 'https://api.openai.com/v1',
   model: string = 'tts-1',
   voice: string = 'alloy'
@@ -34,7 +55,7 @@ export async function generateTTS(
 
 export async function generateTopMediaiTTS(
   text: string,
-  apiKey: string, // Ignored
+  _apiKey: string, // Ignored
   speaker: string = '00151554-3826-11ee-a861-00163e2ac61b',
   emotion: string = 'Neutral'
 ): Promise<Blob> {
@@ -43,7 +64,7 @@ export async function generateTopMediaiTTS(
 
 export async function generateCambAITTS(
   text: string,
-  apiKey: string, // Ignored
+  _apiKey: string, // Ignored
   voiceId: number = 147320,
   language: number = 1,
   gender: number = 1,
@@ -54,9 +75,17 @@ export async function generateCambAITTS(
 
 export async function generateElevenLabsTTS(
   text: string,
-  apiKey: string, // Ignored
+  _apiKey: string, // Ignored
   voiceId: string = '21m00Tcm4TlvDq8ikWAM',
   modelId: string = 'eleven_monolingual_v1'
 ): Promise<Blob> {
   return generateSecureTTS('elevenlabs', text, { voiceId, modelId });
+}
+
+export async function generateGoogleFreeTTS(
+  text: string,
+  language: string = 'en',
+  gender: string = 'female'
+): Promise<Blob> {
+  return generateSecureTTS('google-free', text, { language, gender });
 }

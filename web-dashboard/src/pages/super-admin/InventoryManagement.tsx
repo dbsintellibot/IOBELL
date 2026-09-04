@@ -1,17 +1,22 @@
 import { useState, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { Plus, Link as LinkIcon } from 'lucide-react'
+import { Plus, Link as LinkIcon, Upload, CheckCircle2, AlertCircle, Search, ShieldCheck, Zap, Clock, Ban, Calendar } from 'lucide-react'
 
 type InventoryItem = {
   id: string
   serial_number: string
   mac_address: string
+  board_type?: string | null
   claimed_at: string | null
   claimed_by_school_id?: string
   schools?: { name: string } | { name: string }[] | null
   retired_at: string | null
   retired_reason: string | null
+  activation_status?: string | null
+  is_paid?: boolean | null
+  subscription_end_date?: string | null
+  payment_reference?: string | null
 }
 
 type SchoolRelation = {
@@ -30,8 +35,16 @@ type BellDevice = {
   location_area?: string | null
   location_city?: string | null
   location_country?: string | null
+  location_continent?: string | null
   input_voltage_mv?: number | null
   board_type?: string | null
+  firmware_version?: string | null
+  activation_status?: string | null
+  is_paid?: boolean | null
+  activated_at?: string | null
+  subscription_end_date?: string | null
+  payment_reference?: string | null
+  activation_notes?: string | null
 }
 
 const ONLINE_TIMEOUT_MS = 5 * 60 * 1000
@@ -87,7 +100,7 @@ type OtaCommand = {
 
 export default function InventoryManagement() {
   const queryClient = useQueryClient()
-  const [newItem, setNewItem] = useState({ serial_number: '', mac_address: '' })
+  const [newItem, setNewItem] = useState({ serial_number: '', mac_address: '', board_type: 'ESP32-S3 N16R8' })
   const [selectedSchools, setSelectedSchools] = useState<Record<string, string>>({})
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null)
   const [editingNames, setEditingNames] = useState<Record<string, string>>({})
@@ -101,10 +114,37 @@ export default function InventoryManagement() {
   const [isOtaConfirmOpen, setIsOtaConfirmOpen] = useState(false)
   const [pendingOtaUrl, setPendingOtaUrl] = useState('')
 
+  // Product Activation & Subscription State
+  const [deviceToActivate, setDeviceToActivate] = useState<BellDevice | null>(null)
+  const [activationDuration, setActivationDuration] = useState<number>(12) // Default 1 Year (12 months free)
+  const [activationPaymentRef, setActivationPaymentRef] = useState('')
+  const [activationNotes, setActivationNotes] = useState('')
+  const [deviceToSuspend, setDeviceToSuspend] = useState<BellDevice | null>(null)
+  const [suspendReason, setSuspendReason] = useState('')
+  const [filterActivation, setFilterActivation] = useState<'all' | 'pending' | 'active' | 'expired' | 'suspended'>('all')
+
+  // CSV Bulk Upload State
+  const [isCsvExpanded, setIsCsvExpanded] = useState(false)
+  const [csvRows, setCsvRows] = useState<Array<{
+    serial_number: string
+    mac_address: string
+    board_type?: string
+    error?: string
+    isValid: boolean
+  }>>([])
+  const [csvFileName, setCsvFileName] = useState('')
+  const [dragActive, setDragActive] = useState(false)
+
+  // Filters State
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterStatus, setFilterStatus] = useState<'all' | 'online' | 'offline'>('all')
+  const [filterSchool, setFilterSchool] = useState('')
+  const [filterBoardType, setFilterBoardType] = useState('')
+
   const { data: schools = [] } = useQuery({
     queryKey: ['schools_list'],
     queryFn: async () => {
-      const { data } = await supabase.from('schools').select('id, name').order('name')
+      const { data } = await supabase.from('schools').select('id, name, subscription_end_date, payment_status').order('name')
       return data || []
     }
   })
@@ -113,9 +153,9 @@ export default function InventoryManagement() {
     queryKey: ['detected_devices'],
     queryFn: async () => {
       const selectWithArea =
-        'id, mac_address, name, status, last_heartbeat, school_id, location_area, location_city, location_country, input_voltage_mv, schools(name, logo_url)'
+        'id, mac_address, name, status, last_heartbeat, school_id, location_area, location_city, location_country, location_continent, input_voltage_mv, board_type, firmware_version, activation_status, is_paid, activated_at, subscription_end_date, payment_reference, activation_notes, schools(name, logo_url)'
       const selectWithoutArea =
-        'id, mac_address, name, status, last_heartbeat, school_id, location_city, location_country, input_voltage_mv, schools(name, logo_url)'
+        'id, mac_address, name, status, last_heartbeat, school_id, location_city, location_country, input_voltage_mv, board_type, firmware_version, activation_status, is_paid, activated_at, subscription_end_date, payment_reference, activation_notes, schools(name, logo_url)'
 
       const { data: dataWithArea, error: errorWithArea } = await supabase
         .from('bell_devices')
@@ -175,7 +215,7 @@ export default function InventoryManagement() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('device_inventory')
-        .select('id, serial_number, mac_address, claimed_at, claimed_by_school_id, retired_at, retired_reason, schools(name)')
+        .select('id, serial_number, mac_address, board_type, claimed_at, claimed_by_school_id, retired_at, retired_reason, activation_status, is_paid, subscription_end_date, payment_reference, schools(name)')
         .order('created_at', { ascending: false })
       if (error) {
         console.error('Failed to load device inventory for super admin:', error)
@@ -200,7 +240,6 @@ export default function InventoryManagement() {
   })
 
   const unassignedInventory = inventory.filter((item) => !item.claimed_at && !item.retired_at)
-  const unassignedDetectedDevices = detectedDevices.filter((device) => !device.school_id)
 
   const assignMutation = useMutation({
     mutationFn: async ({ item, schoolId }: { item: InventoryItem, schoolId: string }) => {
@@ -249,7 +288,7 @@ export default function InventoryManagement() {
       if (error) throw error
     },
     onSuccess: () => {
-      setNewItem({ serial_number: '', mac_address: '' })
+      setNewItem({ serial_number: '', mac_address: '', board_type: 'ESP32-S3 N16R8' })
       queryClient.invalidateQueries({ queryKey: ['device_inventory'] })
       setNotification({ type: 'success', message: 'Device added successfully' })
       setTimeout(() => setNotification(null), 3000)
@@ -297,6 +336,66 @@ export default function InventoryManagement() {
     }
   })
 
+  const activateDeviceMutation = useMutation({
+    mutationFn: async ({ 
+      deviceId, 
+      durationMonths, 
+      paymentRef, 
+      notes 
+    }: { 
+      deviceId: string
+      durationMonths: number
+      paymentRef?: string
+      notes?: string 
+    }) => {
+      const { error } = await supabase.rpc('activate_device', {
+        p_device_id: deviceId,
+        p_duration_months: durationMonths,
+        p_payment_ref: paymentRef || null,
+        p_notes: notes || null
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['device_inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['detected_devices'] })
+      queryClient.invalidateQueries({ queryKey: ['schools_list'] })
+      setNotification({ type: 'success', message: 'Device successfully activated and 1-Year Free Subscription granted!' })
+      setTimeout(() => setNotification(null), 4000)
+      setDeviceToActivate(null)
+      setActivationPaymentRef('')
+      setActivationNotes('')
+    },
+    onError: (error) => {
+      console.error(error)
+      setNotification({ type: 'error', message: `Failed to activate device: ${error instanceof Error ? error.message : 'Unknown error'}` })
+      setTimeout(() => setNotification(null), 4000)
+    }
+  })
+
+  const suspendDeviceMutation = useMutation({
+    mutationFn: async ({ deviceId, reason }: { deviceId: string; reason?: string }) => {
+      const { error } = await supabase.rpc('suspend_device', {
+        p_device_id: deviceId,
+        p_reason: reason || null
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['device_inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['detected_devices'] })
+      setNotification({ type: 'success', message: 'Device suspended.' })
+      setTimeout(() => setNotification(null), 3000)
+      setDeviceToSuspend(null)
+      setSuspendReason('')
+    },
+    onError: (error) => {
+      console.error(error)
+      setNotification({ type: 'error', message: `Failed to suspend device: ${error instanceof Error ? error.message : 'Unknown error'}` })
+      setTimeout(() => setNotification(null), 3000)
+    }
+  })
+
   const renameDeviceMutation = useMutation({
     mutationFn: async ({ deviceId, name }: { deviceId: string; name: string }) => {
       const trimmed = name.trim()
@@ -331,7 +430,7 @@ export default function InventoryManagement() {
   })
 
   const sendOtaMutation = useMutation({
-    mutationFn: async ({ commands }: { commands: { device_id: string; school_id: string; command: string; payload: { url: string } }[] }) => {
+    mutationFn: async ({ commands }: { commands: { device_id: string; command: string; payload: { url: string } }[] }) => {
       if (!commands.length) {
         throw new Error('No devices selected')
       }
@@ -386,21 +485,369 @@ export default function InventoryManagement() {
     }
   }
 
+  // CSV Drag and Drop Handlers
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true)
+    } else if (e.type === "dragleave") {
+      setDragActive(false)
+    }
+  }
+
+  const parseAndValidateCSV = (text: string) => {
+    const lines = text.split(/\r?\n/)
+    if (lines.length === 0) return
+    
+    // Find header
+    let startIndex = 0
+    while (startIndex < lines.length && !lines[startIndex].trim()) {
+      startIndex++
+    }
+    
+    if (startIndex >= lines.length) return
+    
+    const headers = lines[startIndex].split(',').map(h => h.trim().toLowerCase())
+    const serialIdx = headers.indexOf('serial_number')
+    const macIdx = headers.indexOf('mac_address')
+    const boardIdx = headers.indexOf('board_type')
+    
+    const parsed: typeof csvRows = []
+    
+    for (let i = startIndex + 1; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+      
+      const parts = line.split(',').map(p => p.trim())
+      let serial = ''
+      let mac = ''
+      let board = 'ESP32-S3 N16R8'
+      
+      if (serialIdx !== -1 && macIdx !== -1) {
+        serial = parts[serialIdx] || ''
+        mac = parts[macIdx] || ''
+        if (boardIdx !== -1 && parts[boardIdx]) {
+          board = parts[boardIdx]
+        }
+      } else {
+        // Fallback to first two columns
+        serial = parts[0] || ''
+        mac = parts[1] || ''
+        if (parts[2]) {
+          board = parts[2]
+        }
+      }
+      
+      // Validation
+      let error = ''
+      const macRegex = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/
+      
+      if (!serial) {
+        error = 'Serial number is empty'
+      } else if (!mac) {
+        error = 'MAC address is empty'
+      } else if (!macRegex.test(mac)) {
+        error = 'Invalid MAC address format (must match XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX)'
+      }
+      
+      parsed.push({
+        serial_number: serial,
+        mac_address: mac,
+        board_type: board,
+        error: error || undefined,
+        isValid: !error
+      })
+    }
+    setCsvRows(parsed)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+    
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0]
+      if (file.name.endsWith('.csv')) {
+        setCsvFileName(file.name)
+        const reader = new FileReader()
+        reader.onload = (event) => {
+          const text = event.target?.result as string
+          parseAndValidateCSV(text)
+        }
+        reader.readAsText(file)
+      } else {
+        setNotification({ type: 'error', message: 'Only CSV files are allowed' })
+        setTimeout(() => setNotification(null), 3000)
+      }
+    }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0]
+      setCsvFileName(file.name)
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        const text = event.target?.result as string
+        parseAndValidateCSV(text)
+      }
+      reader.readAsText(file)
+    }
+  }
+
+  const bulkRegisterMutation = useMutation({
+    mutationFn: async (rows: typeof csvRows) => {
+      const validPayload = rows
+        .filter(r => r.isValid)
+        .map(r => ({
+          serial_number: r.serial_number,
+          mac_address: r.mac_address,
+          board_type: r.board_type || 'ESP32-S3 N16R8'
+        }))
+      
+      if (validPayload.length === 0) {
+        throw new Error('No valid devices to register')
+      }
+
+      const { data, error } = await supabase.rpc('bulk_register_inventory', {
+        p_devices: validPayload
+      })
+      if (error) throw error
+      return data as { inserted: number; skipped: number; invalid: number }
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['device_inventory'] })
+      setNotification({
+        type: 'success',
+        message: `Bulk registration summary: Successfully registered ${data.inserted} devices, skipped ${data.skipped} duplicates, failed ${data.invalid} invalid rows.`
+      })
+      setTimeout(() => setNotification(null), 5000)
+      // reset
+      setCsvRows([])
+      setCsvFileName('')
+      setIsCsvExpanded(false)
+    },
+    onError: (error) => {
+      console.error(error)
+      setNotification({
+        type: 'error',
+        message: `Failed to bulk register: ${error instanceof Error ? error.message : 'Unknown error'}`
+      })
+      setTimeout(() => setNotification(null), 3000)
+    }
+  })
+
+  const uniqueBoardTypes = Array.from(
+    new Set(
+      detectedDevices
+        .map((d) => d.board_type)
+        .filter(Boolean) as string[]
+    )
+  ).sort()
+
+  const pendingCount = detectedDevices.filter((d) => {
+    const act = d.activation_status || 'unactivated'
+    return act === 'pending_activation' || (!d.activation_status && d.school_id)
+  }).length
+
+  const activeCount = detectedDevices.filter((d) => {
+    const act = d.activation_status || 'unactivated'
+    const isExp = d.subscription_end_date ? new Date(d.subscription_end_date).getTime() < Date.now() : false
+    return act === 'active' && !isExp
+  }).length
+
+  const expiredCount = detectedDevices.filter((d) => {
+    const act = d.activation_status || 'unactivated'
+    const isExp = d.subscription_end_date ? new Date(d.subscription_end_date).getTime() < Date.now() : false
+    return act === 'expired' || isExp || act === 'suspended'
+  }).length
+
+  const filteredDevices = detectedDevices.filter((device) => {
+    const inventoryItem = inventory.find((item) => item.mac_address === device.mac_address)
+    const serial = (inventoryItem?.serial_number || '').toLowerCase()
+    const mac = (device.mac_address || '').toLowerCase()
+    const name = (device.name || '').toLowerCase()
+    const query = searchQuery.toLowerCase().trim()
+    
+    if (query) {
+      if (!serial.includes(query) && !mac.includes(query) && !name.includes(query)) {
+        return false
+      }
+    }
+    
+    if (filterSchool && device.school_id !== filterSchool) {
+      return false
+    }
+    
+    const statusInfo = resolveDeviceStatus(device.status, device.last_heartbeat)
+    if (filterStatus !== 'all') {
+      if (filterStatus === 'online' && !statusInfo.isOnline) return false
+      if (filterStatus === 'offline' && statusInfo.isOnline) return false
+    }
+    
+    if (filterBoardType && device.board_type !== filterBoardType) {
+      return false
+    }
+
+    const actStatus = device.activation_status || (device.school_id ? 'pending_activation' : 'unactivated')
+    const isExpired = device.subscription_end_date ? new Date(device.subscription_end_date).getTime() < Date.now() : false
+
+    if (filterActivation === 'pending') {
+      if (actStatus !== 'pending_activation' && (actStatus !== 'unactivated' || !device.school_id)) return false
+    } else if (filterActivation === 'active') {
+      if (actStatus !== 'active' || isExpired) return false
+    } else if (filterActivation === 'expired') {
+      if (!isExpired && actStatus !== 'expired') return false
+    } else if (filterActivation === 'suspended') {
+      if (actStatus !== 'suspended') return false
+    }
+    
+    return true
+  })
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-foreground">Device Inventory</h2>
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Device Inventory & Licensing</h2>
+          <p className="text-xs text-muted-foreground">Manage hardware stock, 1-click cloud activation, 1-year free subscriptions, and renewals.</p>
+        </div>
+        <button
+          onClick={() => setIsCsvExpanded(!isCsvExpanded)}
+          className="inline-flex items-center rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 px-4 py-2 text-sm font-medium border border-border transition-colors shadow-sm"
+        >
+          <Upload className="mr-2 h-4 w-4" />
+          {isCsvExpanded ? 'Hide Bulk Import' : 'Bulk Import CSV'}
+        </button>
       </div>
+
+      {isCsvExpanded && (
+        <div className="rounded-lg bg-card text-foreground p-6 shadow border border-border space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-medium text-foreground">Bulk Upload CSV</h3>
+            <button
+              onClick={() => {
+                setCsvRows([])
+                setCsvFileName('')
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+          
+          <div
+            onDragEnter={handleDrag}
+            onDragOver={handleDrag}
+            onDragLeave={handleDrag}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer transition-colors ${
+              dragActive
+                ? 'border-primary bg-primary/5'
+                : 'border-border hover:border-muted-foreground bg-muted/20'
+            }`}
+            onClick={() => {
+              const fileInput = document.getElementById('csv-file-input')
+              fileInput?.click()
+            }}
+          >
+            <input
+              id="csv-file-input"
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            <Upload className="h-10 w-10 text-muted-foreground mb-2 animate-pulse" />
+            <p className="text-sm font-medium text-foreground">
+              {csvFileName ? `Selected: ${csvFileName}` : 'Drag and drop your CSV file here, or click to browse'}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              CSV must have headers: <code className="bg-muted px-1 rounded">serial_number,mac_address</code>
+            </p>
+          </div>
+
+          {csvRows.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">
+                  Parsed <span className="font-semibold text-foreground">{csvRows.length}</span> rows
+                </span>
+                <span className="flex gap-4">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                    {csvRows.filter(r => r.isValid).length} Valid
+                  </span>
+                  {csvRows.some(r => !r.isValid) && (
+                    <span className="text-destructive font-medium">
+                      {csvRows.filter(r => !r.isValid).length} Invalid
+                    </span>
+                  )}
+                </span>
+              </div>
+
+              <div className="max-h-60 overflow-y-auto border border-border rounded-md">
+                <table className="min-w-full divide-y divide-border text-xs">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-medium text-muted-foreground">Row</th>
+                      <th className="px-4 py-2 text-left font-medium text-muted-foreground">Serial</th>
+                      <th className="px-4 py-2 text-left font-medium text-muted-foreground">MAC Address</th>
+                      <th className="px-4 py-2 text-left font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border bg-background">
+                    {csvRows.map((row, idx) => (
+                      <tr key={idx} className={row.isValid ? '' : 'bg-destructive/5'}>
+                        <td className="px-4 py-2 text-muted-foreground">{idx + 1}</td>
+                        <td className="px-4 py-2 font-medium">{row.serial_number || <span className="italic text-muted-foreground">empty</span>}</td>
+                        <td className="px-4 py-2 font-mono">{row.mac_address || <span className="italic text-muted-foreground">empty</span>}</td>
+                        <td className="px-4 py-2">
+                          {row.isValid ? (
+                            <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400">
+                              <CheckCircle2 className="h-3 w-3 mr-1" /> Valid
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center text-destructive" title={row.error}>
+                              <AlertCircle className="h-3 w-3 mr-1" /> {row.error}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCsvRows([])
+                    setCsvFileName('')
+                  }}
+                  className="rounded-md border border-input bg-background px-4 py-2 text-sm hover:bg-accent transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!csvRows.some(r => r.isValid) || bulkRegisterMutation.isPending}
+                  onClick={() => bulkRegisterMutation.mutate(csvRows)}
+                  className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                >
+                  {bulkRegisterMutation.isPending ? 'Registering...' : `Register ${csvRows.filter(r => r.isValid).length} Valid Devices`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {(inventoryError || detectedDevicesError) && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-2 text-xs text-destructive dark:text-red-400">
           Super Admin diagnostics: failed to load device data. {(inventoryError || detectedDevicesError)?.message}
-        </div>
-      )}
-
-      {!isLoading && !inventoryError && !detectedDevicesError && unassignedInventory.length === 0 && detectedDevices.length === 0 && (
-        <div className="rounded-md bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs text-amber-700 dark:text-amber-400">
-          Super Admin diagnostics: no devices or inventory records found. If you expect devices, verify migrations and that your super admin role is configured for this account.
         </div>
       )}
 
@@ -414,7 +861,7 @@ export default function InventoryManagement() {
       {unassignedInventory.length > 0 && (
         <div className="overflow-hidden rounded-lg bg-card text-foreground shadow border border-border">
           <div className="px-4 py-5 sm:p-6">
-            <h3 className="mb-4 text-lg font-medium text-primary">Unassigned Devices</h3>
+            <h3 className="mb-4 text-lg font-medium text-primary">Unclaimed Factory Inventory ({unassignedInventory.length})</h3>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-border">
                 <thead className="bg-muted">
@@ -453,84 +900,235 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      {unassignedInventory.length === 0 && unassignedDetectedDevices.length > 0 && (
-        <div className="overflow-hidden rounded-lg bg-card text-foreground shadow border border-border">
-          <div className="px-4 py-5 sm:p-6">
-            <h3 className="mb-4 text-lg font-medium text-primary">Unassigned Devices (Detected)</h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-border">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">MAC Address</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Last Seen</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-background text-foreground divide-y divide-border">
-                  {unassignedDetectedDevices.map((device) => {
-                    const statusInfo = resolveDeviceStatus(device.status, device.last_heartbeat)
-                    return (
-                      <tr key={device.id}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-foreground">{device.name || 'Unnamed Device'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">{device.mac_address}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          <span className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                            statusInfo.isOnline ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground'
-                          }`}>
-                            {statusInfo.label}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
-                          {device.last_heartbeat ? new Date(device.last_heartbeat).toLocaleString() : '-'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Global Devices List for Super Admin */}
       <div className="overflow-hidden rounded-lg bg-card text-foreground shadow border border-border">
-        <div className="px-4 py-5 sm:p-6">
-          <h3 className="mb-4 text-lg font-medium text-primary">All Devices (Across Schools)</h3>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {detectedDevices.map((device) => {
-              const inventoryItem = inventory.find((item) => item.mac_address === device.mac_address)
-              const isRetired = !!inventoryItem?.retired_at
-              const canUnassign = !!device.school_id && !isRetired
-              const canRetire = !isRetired && !!inventoryItem
-              const canOta = !!device.school_id && !isRetired
-              const admin = adminPermissions.find((u) => u.school_id === device.school_id) || null
-              const statusInfo = resolveDeviceStatus(device.status, device.last_heartbeat)
-              const { name: schoolName, logoUrl: schoolLogoUrl } = getSchoolInfo(device)
+        <div className="px-4 py-5 sm:p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-medium text-primary">All Devices & Activation Management</h3>
+              <p className="text-xs text-muted-foreground">Filter by activation status, approve 1-Year Free subscriptions upon payment, or extend renewals.</p>
+            </div>
+            
+            {/* Bulk select summary / Clear selection */}
+            {Object.values(selectedDeviceIds).filter(Boolean).length > 0 && (
+              <div className="flex items-center gap-2 bg-primary/10 border border-primary/20 px-3 py-1 rounded-full text-xs font-medium text-primary self-start">
+                <span>{Object.values(selectedDeviceIds).filter(Boolean).length} selected for OTA</span>
+                <button
+                  onClick={() => setSelectedDeviceIds({})}
+                  className="hover:text-primary/80 underline font-bold"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
 
-              return (
-                <div key={device.id} className="flex h-full flex-col justify-between rounded-lg border border-border bg-card text-foreground p-4 shadow-sm">
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center gap-3">
-                          {schoolLogoUrl ? (
-                            <img
-                              src={schoolLogoUrl}
-                              alt={schoolName || 'School Logo'}
-                              className="h-10 w-10 rounded-full object-cover border border-border"
-                            />
-                          ) : (
-                            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-xs font-semibold text-muted-foreground border border-border">
-                              {schoolName && schoolName !== '-' ? schoolName.charAt(0).toUpperCase() : '?'}
-                            </div>
-                          )}
-                          <div className="flex-1 space-y-1">
-                            <div className="flex items-center gap-2">
+          {/* Quick Activation Filter Tabs */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-border pb-3">
+            <button
+              onClick={() => setFilterActivation('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                filterActivation === 'all'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+              }`}
+            >
+              All Devices ({detectedDevices.length})
+            </button>
+            <button
+              onClick={() => setFilterActivation('pending')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                filterActivation === 'pending'
+                  ? 'bg-amber-500 text-white shadow-sm'
+                  : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20'
+              }`}
+            >
+              <span className="relative flex h-2 w-2">
+                {pendingCount > 0 && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>}
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+              Pending Activation ({pendingCount})
+            </button>
+            <button
+              onClick={() => setFilterActivation('active')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                filterActivation === 'active'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20'
+              }`}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Active Subscriptions ({activeCount})
+            </button>
+            <button
+              onClick={() => setFilterActivation('expired')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                filterActivation === 'expired'
+                  ? 'bg-destructive text-destructive-foreground shadow-sm'
+                  : 'bg-destructive/10 text-destructive dark:text-red-400 hover:bg-destructive/20'
+              }`}
+            >
+              <Clock className="h-3.5 w-3.5" />
+              Expired / Suspended ({expiredCount})
+            </button>
+          </div>
+
+          {/* Search & Filters Top Bar */}
+          <div className="grid gap-3 md:grid-cols-4 sm:grid-cols-2">
+            {/* Search Bar */}
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <Search className="h-4 w-4 text-muted-foreground" />
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search name, serial or MAC..."
+                className="pl-9 w-full rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-primary focus:ring-primary focus:ring-1"
+              />
+            </div>
+
+            {/* School Filter */}
+            <select
+              value={filterSchool}
+              onChange={(e) => setFilterSchool(e.target.value)}
+              className="rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-primary focus:ring-primary focus:ring-1 text-foreground"
+            >
+              <option value="">All Schools</option>
+              {schools.map((school) => (
+                <option key={school.id} value={school.id}>
+                  {school.name}
+                </option>
+              ))}
+            </select>
+
+            {/* Status Filter */}
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}
+              className="rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-primary focus:ring-primary focus:ring-1 text-foreground"
+            >
+              <option value="all">All Connection Statuses</option>
+              <option value="online">Online Only</option>
+              <option value="offline">Offline Only</option>
+            </select>
+
+            {/* Board Type Filter */}
+            <select
+              value={filterBoardType}
+              onChange={(e) => setFilterBoardType(e.target.value)}
+              className="rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-primary focus:ring-primary focus:ring-1 text-foreground"
+            >
+              <option value="">All Board Types</option>
+              {uniqueBoardTypes.map((bt) => (
+                <option key={bt} value={bt}>
+                  {bt}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* High-density structured datatable */}
+          <div className="overflow-x-auto border border-border rounded-lg shadow-sm">
+            <table className="min-w-full divide-y divide-border">
+              <thead className="bg-muted text-muted-foreground text-xs font-semibold uppercase tracking-wider">
+                <tr>
+                  <th className="w-12 px-4 py-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filteredDevices.filter(d => {
+                          const inv = inventory.find(item => item.mac_address === d.mac_address)
+                          return !!d.school_id && !inv?.retired_at
+                        }).length > 0 &&
+                        filteredDevices
+                          .filter(d => {
+                            const inv = inventory.find(item => item.mac_address === d.mac_address)
+                            return !!d.school_id && !inv?.retired_at
+                          })
+                          .every(d => selectedDeviceIds[d.id])
+                      }
+                      onChange={(e) => {
+                        const checked = e.target.checked
+                        const nextSelected = { ...selectedDeviceIds }
+                        filteredDevices
+                          .filter(d => {
+                            const inv = inventory.find(item => item.mac_address === d.mac_address)
+                            return !!d.school_id && !inv?.retired_at
+                          })
+                          .forEach(d => {
+                            if (checked) {
+                              nextSelected[d.id] = true
+                            } else {
+                              delete nextSelected[d.id]
+                            }
+                          })
+                        setSelectedDeviceIds(nextSelected)
+                      }}
+                      className="h-4 w-4 rounded border-input bg-background text-primary focus:ring-primary cursor-pointer"
+                    />
+                  </th>
+                  <th className="px-4 py-3 text-left">Device Name / Details</th>
+                  <th className="px-4 py-3 text-left">Serial Number</th>
+                  <th className="px-4 py-3 text-left">MAC Address</th>
+                  <th className="px-4 py-3 text-left">Board Type</th>
+                  <th className="px-4 py-3 text-left">Assigned School</th>
+                  <th className="px-4 py-3 text-left">License & Activation</th>
+                  <th className="px-4 py-3 text-left">Online Status</th>
+                  <th className="px-4 py-3 text-left">Firmware</th>
+                  <th className="px-4 py-3 text-left">Last Seen</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-background divide-y divide-border text-sm">
+                {filteredDevices.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-6 py-10 text-center text-sm text-muted-foreground bg-muted/10">
+                      No devices matching the current filters.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredDevices.map((device) => {
+                    const inventoryItem = inventory.find((item) => item.mac_address === device.mac_address)
+                    const isRetired = !!inventoryItem?.retired_at
+                    const canUnassign = !!device.school_id && !isRetired
+                    const canRetire = !isRetired && !!inventoryItem
+                    const canOta = !!device.school_id && !isRetired
+                    const admin = adminPermissions.find((u) => u.school_id === device.school_id) || null
+                    const statusInfo = resolveDeviceStatus(device.status, device.last_heartbeat)
+                    const { name: schoolName, logoUrl: schoolLogoUrl } = getSchoolInfo(device)
+
+                    const actStatus = device.activation_status || (device.school_id ? 'pending_activation' : 'unactivated')
+                    const isExpired = device.subscription_end_date ? new Date(device.subscription_end_date).getTime() < Date.now() : false
+                    const daysRemaining = device.subscription_end_date ? Math.ceil((new Date(device.subscription_end_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null
+
+                    return (
+                      <tr key={device.id} className={`hover:bg-muted/10 transition-colors ${isRetired ? 'bg-destructive/5' : ''}`}>
+                        {/* Selection Checkbox */}
+                        <td className="px-4 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!!selectedDeviceIds[device.id]}
+                            onChange={(e) => {
+                              const checked = e.target.checked
+                              setSelectedDeviceIds(prev => ({
+                                ...prev,
+                                [device.id]: checked
+                              }))
+                            }}
+                            disabled={!canOta || sendOtaMutation.isPending}
+                            className="h-4 w-4 rounded border-input bg-background text-primary focus:ring-primary disabled:opacity-30 cursor-pointer"
+                          />
+                        </td>
+                        
+                        {/* Name Input / ID */}
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
                               <input
                                 type="text"
-                                className="w-40 rounded-md border-input bg-background shadow-sm focus:border-primary focus:ring-primary text-sm p-1"
+                                className="w-32 rounded-md border border-input bg-background shadow-sm focus:border-primary focus:ring-primary text-xs p-1 text-foreground"
                                 value={editingNames[device.id] ?? device.name ?? ''}
                                 onChange={(e) => {
                                   const value = e.target.value
@@ -556,98 +1154,237 @@ export default function InventoryManagement() {
                                   renameDeviceMutation.mutate({ deviceId: device.id, name: trimmed })
                                 }}
                                 disabled={renameDeviceMutation.isPending}
-                                className="inline-flex items-center rounded-md border border-input bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent disabled:opacity-50"
+                                className="inline-flex items-center rounded border border-input bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:bg-accent disabled:opacity-50 transition-colors"
                               >
                                 Save
                               </button>
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {schoolName}
+                            <div className="text-[10px] text-muted-foreground select-all leading-none font-mono">
+                              ID: {device.id}
                             </div>
                           </div>
-                        </div>
-                        <div className="text-xs text-muted-foreground break-all">
-                          ID: {device.id}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-input bg-background text-primary focus:ring-primary"
-                          checked={!!selectedDeviceIds[device.id]}
-                          onChange={(event) => {
-                            const checked = event.target.checked
-                            setSelectedDeviceIds((prev) => ({
-                              ...prev,
-                              [device.id]: checked
-                            }))
-                          }}
-                          disabled={!canOta || sendOtaMutation.isPending}
-                        />
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                          statusInfo.isOnline ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground'
-                        }`}>
-                          {statusInfo.label.toUpperCase()}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-xs text-muted-foreground space-y-1">
-                      <div className="truncate">MAC: {device.mac_address || 'N/A'}</div>
-                      <div>School: {schoolName}</div>
-                      <div>Last seen: {device.last_heartbeat ? new Date(device.last_heartbeat).toLocaleString() : 'N/A'}</div>
-                      <div>
-                        Input power:{' '}
-                        {typeof device.input_voltage_mv === 'number'
-                          ? `${(device.input_voltage_mv / 1000).toFixed(2)} V`
-                          : 'N/A'}
-                      </div>
-                      <div>
-                        TTS / Voice:{' '}
-                        <span className={`inline-flex rounded-full px-2 text-[11px] font-semibold leading-5 ${
-                          admin?.tts_enabled ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground'
-                        }`}>
-                          {admin ? (admin.tts_enabled ? 'On' : 'Off') : 'N/A'}
-                        </span>
-                      </div>
-                      <div>
-                        Location:{' '}
-                        {device.location_area || device.location_city || device.location_country
-                          ? [device.location_area, device.location_city, device.location_country].filter(Boolean).join(', ')
-                          : 'N/A'}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex justify-end gap-2">
-                    <button
-                      disabled={!canUnassign || unassignDeviceMutation.isPending}
-                      onClick={() => {
-                        if (!canUnassign) return
-                        setDeviceToUnassign(device)
-                      }}
-                      className="inline-flex items-center rounded-md border border-transparent bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-600 hover:bg-amber-500/20 disabled:opacity-50"
-                    >
-                      Unassign
-                    </button>
-                    <button
-                      disabled={!canRetire || retireDeviceMutation.isPending}
-                      onClick={() => {
-                        if (!canRetire) return
-                        setDeviceToRetire(device)
-                        setRetireReason('damaged')
-                      }}
-                      className="inline-flex items-center rounded-md border border-transparent bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
-                    >
-                      Retire
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
+                        </td>
+
+                        {/* Serial Number */}
+                        <td className="px-4 py-3 font-medium whitespace-nowrap">
+                          {inventoryItem?.serial_number || '-'}
+                        </td>
+
+                        {/* MAC Address */}
+                        <td className="px-4 py-3 font-mono text-xs whitespace-nowrap select-all text-muted-foreground">
+                          {device.mac_address}
+                        </td>
+
+                        {/* Board Type */}
+                        <td className="px-4 py-3">
+                          <span className="text-xs font-mono bg-muted/60 px-1.5 py-0.5 rounded text-muted-foreground">
+                            {device.board_type || 'N/A'}
+                          </span>
+                        </td>
+
+                        {/* Assigned School */}
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              {schoolLogoUrl ? (
+                                <img
+                                  src={schoolLogoUrl}
+                                  alt={schoolName}
+                                  className="h-5 w-5 rounded-full object-cover border border-border"
+                                />
+                              ) : (
+                                <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground border border-border">
+                                  {schoolName !== '-' ? schoolName.charAt(0).toUpperCase() : '?'}
+                                </div>
+                              )}
+                              <span className="text-xs font-medium text-foreground truncate max-w-[120px]">{schoolName}</span>
+                            </div>
+                            {(() => {
+                              const parts = [
+                                device.location_area,
+                                device.location_city,
+                                device.location_country,
+                                device.location_continent
+                              ].filter(val => val && val.trim().toLowerCase() !== 'null' && val.trim().toLowerCase() !== 'undefined');
+                              return parts.length > 0 ? (
+                                <div className="text-[10px] text-muted-foreground leading-none">
+                                  Loc: {parts.join(', ')}
+                                </div>
+                              ) : null;
+                            })()}
+                          </div>
+                        </td>
+
+                        {/* License & Activation Column */}
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
+                            {actStatus === 'active' && !isExpired ? (
+                              <div>
+                                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                                  <ShieldCheck className="h-3 w-3 mr-1" />
+                                  ACTIVE
+                                </span>
+                                {device.subscription_end_date && (
+                                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                                    Expires: {new Date(device.subscription_end_date).toLocaleDateString()}
+                                    {daysRemaining !== null && ` (${daysRemaining}d left)`}
+                                  </div>
+                                )}
+                              </div>
+                            ) : actStatus === 'pending_activation' ? (
+                              <div>
+                                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                                  <span className="relative flex h-1.5 w-1.5 mr-1.5">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                                  </span>
+                                  PENDING ACTIVATION
+                                </span>
+                                <div className="text-[10px] text-amber-600/90 dark:text-amber-400/90 mt-0.5">
+                                  Awaiting payment confirmation
+                                </div>
+                              </div>
+                            ) : actStatus === 'suspended' ? (
+                              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-destructive/15 text-destructive dark:text-red-400 border border-destructive/30">
+                                <Ban className="h-3 w-3 mr-1" />
+                                SUSPENDED
+                              </span>
+                            ) : isExpired ? (
+                              <div>
+                                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-destructive/15 text-destructive dark:text-red-400 border border-destructive/30">
+                                  <Clock className="h-3 w-3 mr-1" />
+                                  EXPIRED
+                                </span>
+                                <div className="text-[10px] text-destructive mt-0.5">
+                                  Renewal Due
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-muted text-muted-foreground">
+                                UNCLAIMED
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Online Status */}
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold leading-5 ${
+                              statusInfo.isOnline ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground'
+                            }`}>
+                              <span className={`h-1.5 w-1.5 rounded-full mr-1.5 ${statusInfo.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
+                              {statusInfo.label.toUpperCase()}
+                            </span>
+                            {typeof device.input_voltage_mv === 'number' && (
+                              <div className="text-[10px] text-muted-foreground leading-none">
+                                Power: {(device.input_voltage_mv / 1000).toFixed(2)} V ({device.input_voltage_mv >= 4500 ? 'Mains' : 'Battery'})
+                              </div>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Firmware Version */}
+                        <td className="px-4 py-3">
+                          <div className="space-y-1">
+                            <span className="text-xs font-mono text-muted-foreground">
+                              {device.firmware_version || 'N/A'}
+                            </span>
+                            <div className="text-[10px] text-muted-foreground leading-none">
+                              TTS: <span className={admin?.tts_enabled ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
+                                {admin ? (admin.tts_enabled ? 'On' : 'Off') : 'N/A'}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Last Heartbeat */}
+                        <td className="px-4 py-3 whitespace-nowrap text-xs text-muted-foreground">
+                          {device.last_heartbeat ? new Date(device.last_heartbeat).toLocaleString() : 'N/A'}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex gap-1.5 justify-end items-center">
+                            {/* Activation / Approval Button */}
+                            {actStatus !== 'active' || isExpired ? (
+                              <button
+                                onClick={() => {
+                                  setDeviceToActivate(device)
+                                  setActivationDuration(12)
+                                  setActivationPaymentRef('')
+                                  setActivationNotes('')
+                                }}
+                                className="inline-flex items-center rounded-md bg-emerald-600 text-white px-2.5 py-1 text-xs font-semibold hover:bg-emerald-700 shadow-sm transition-all focus:ring-2 focus:ring-emerald-500"
+                                title="Approve payment & activate 1-year free subscription"
+                              >
+                                <Zap className="h-3 w-3 mr-1" />
+                                {actStatus === 'pending_activation' ? 'Approve & Activate' : isExpired ? 'Renew License' : 'Activate'}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setDeviceToActivate(device)
+                                  setActivationDuration(12)
+                                  setActivationPaymentRef('')
+                                  setActivationNotes('')
+                                }}
+                                className="inline-flex items-center rounded-md border border-primary/30 bg-primary/10 text-primary px-2 py-1 text-xs font-medium hover:bg-primary/20 transition-colors"
+                                title="Extend subscription"
+                              >
+                                <Calendar className="h-3 w-3 mr-1" />
+                                Extend
+                              </button>
+                            )}
+
+                            {actStatus === 'active' && !isExpired && (
+                              <button
+                                onClick={() => {
+                                  setDeviceToSuspend(device)
+                                  setSuspendReason('')
+                                }}
+                                className="inline-flex items-center rounded-md border border-destructive/30 bg-destructive/10 text-destructive px-2 py-1 text-xs font-medium hover:bg-destructive/20 transition-colors"
+                                title="Suspend device access"
+                              >
+                                <Ban className="h-3 w-3 mr-1" />
+                                Suspend
+                              </button>
+                            )}
+
+                            <button
+                              disabled={!canUnassign || unassignDeviceMutation.isPending}
+                              onClick={() => setDeviceToUnassign(device)}
+                              className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 disabled:opacity-50 transition-colors"
+                              title="Unassign device from school"
+                            >
+                              Unassign
+                            </button>
+                            <button
+                              disabled={!canRetire || retireDeviceMutation.isPending}
+                              onClick={() => {
+                                setDeviceToRetire(device)
+                                setRetireReason('damaged')
+                              }}
+                              className="inline-flex items-center rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50 transition-colors"
+                              title="Retire device permanently"
+                            >
+                              Retire
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
-          <div className="mt-4 space-y-3">
+
+          {/* OTA Firmware Update panel */}
+          <div className="pt-4 border-t border-border space-y-3">
             <h4 className="text-sm font-medium text-primary">OTA Firmware Update</h4>
             <p className="text-xs text-muted-foreground">
-              Select one or more assigned devices above, then upload firmware or enter a URL.
+              Select one or more assigned devices in the table above, then upload firmware or enter a URL.
             </p>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <div className="flex items-center gap-2">
@@ -662,7 +1399,7 @@ export default function InventoryManagement() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isFirmwareUploading || sendOtaMutation.isPending}
-                  className="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-foreground hover:bg-accent disabled:opacity-50"
+                  className="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-foreground hover:bg-accent disabled:opacity-50 transition-colors shadow-sm"
                 >
                   {isFirmwareUploading ? 'Uploading...' : 'Select .bin File'}
                 </button>
@@ -676,7 +1413,7 @@ export default function InventoryManagement() {
                   value={firmwareUrl}
                   onChange={(event) => setFirmwareUrl(event.target.value)}
                   placeholder="https://example.com/firmware.bin"
-                  className="block w-full rounded-md border-input bg-background shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
+                  className="block w-full rounded-md border border-input bg-background shadow-sm focus:border-primary focus:ring-primary focus:ring-1 sm:text-sm p-2 text-foreground"
                 />
               </div>
               <button
@@ -705,7 +1442,7 @@ export default function InventoryManagement() {
                   setIsOtaConfirmOpen(true)
                 }}
                 disabled={sendOtaMutation.isPending}
-                className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm"
               >
                 {sendOtaMutation.isPending ? 'Sending OTA...' : 'Send OTA Update'}
               </button>
@@ -787,6 +1524,17 @@ export default function InventoryManagement() {
               onChange={(e) => setNewItem({ ...newItem, mac_address: e.target.value })}
             />
           </div>
+          <div className="w-48">
+            <label className="block text-sm font-medium text-foreground">Board Type</label>
+            <select
+              className="mt-1 block w-full rounded-md border-input bg-background text-foreground shadow-sm focus:border-primary focus:ring-primary sm:text-sm p-2 border"
+              value={newItem.board_type}
+              onChange={(e) => setNewItem({ ...newItem, board_type: e.target.value })}
+            >
+              <option value="ESP32-S3 N16R8">ESP32-S3 N16R8</option>
+              <option value="ESP32-C3 Mini">ESP32-C3 Mini</option>
+            </select>
+          </div>
           <button
             type="submit"
             disabled={addMutation.isPending}
@@ -810,6 +1558,7 @@ export default function InventoryManagement() {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Serial Number</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">MAC Address</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Board Type</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Claimed By</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Claimed At</th>
@@ -821,6 +1570,7 @@ export default function InventoryManagement() {
                     <tr key={item.id}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-foreground">{item.serial_number}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">{item.mac_address}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-xs">{item.board_type || 'ESP32-S3 N16R8'}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {item.retired_at ? (
                           <span className="inline-flex rounded-full bg-destructive/10 px-2 text-xs font-semibold leading-5 text-destructive dark:text-red-400">Retired</span>
@@ -953,6 +1703,176 @@ export default function InventoryManagement() {
           </div>
         </div>
       )}
+      {/* Approve & Activate Modal */}
+      {deviceToActivate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-xl bg-card text-foreground p-6 shadow-2xl border border-border space-y-5 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <div className="rounded-full bg-emerald-500/15 p-2 text-emerald-600">
+                  <ShieldCheck className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-foreground">Approve & Activate AutoBell</h3>
+                  <p className="text-xs text-muted-foreground">Grant cloud license & subscription to hardware</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDeviceToActivate(null)}
+                className="text-muted-foreground hover:text-foreground text-sm font-semibold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-lg bg-muted/40 p-3.5 border border-border/60 text-xs space-y-1.5 font-mono">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground font-sans">Device:</span>
+                <span className="font-semibold text-foreground">{deviceToActivate.name || 'Unnamed Device'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground font-sans">MAC Address:</span>
+                <span className="text-foreground">{deviceToActivate.mac_address}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground font-sans">School:</span>
+                <span className="font-sans font-medium text-foreground">{getSchoolInfo(deviceToActivate).name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground font-sans">Current Status:</span>
+                <span className="uppercase text-amber-600 font-semibold">{deviceToActivate.activation_status || 'Pending'}</span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1">
+                  Subscription Duration
+                </label>
+                <select
+                  value={activationDuration}
+                  onChange={(e) => setActivationDuration(parseInt(e.target.value))}
+                  className="w-full rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-primary focus:ring-primary text-foreground"
+                >
+                  <option value={12}>1 Year (12 Months) — Standard 1st Year Free</option>
+                  <option value={24}>2 Years (24 Months) — Multi-Year Plan</option>
+                  <option value={36}>3 Years (36 Months)</option>
+                  <option value={6}>6 Months — Trial / Semi-Annual</option>
+                  <option value={120}>10 Years (Lifetime)</option>
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Subscribers will have full cloud control, schedule syncing, audio streaming, and automatic bell ringing until the license expiry date.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1">
+                  Payment Reference / Invoice / Bank Slip ID (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={activationPaymentRef}
+                  onChange={(e) => setActivationPaymentRef(e.target.value)}
+                  placeholder="e.g. Bank Slip #49281, JazzCash Ref 91029, Cash Receipt"
+                  className="w-full rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-primary focus:ring-primary text-foreground"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1">
+                  Activation Notes / Reseller (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={activationNotes}
+                  onChange={(e) => setActivationNotes(e.target.value)}
+                  placeholder="e.g. Sold by Reseller Alpha, Paid in full"
+                  className="w-full rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-primary focus:ring-primary text-foreground"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setDeviceToActivate(null)}
+                className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={activateDeviceMutation.isPending}
+                onClick={() => {
+                  if (deviceToActivate) {
+                    activateDeviceMutation.mutate({
+                      deviceId: deviceToActivate.id,
+                      durationMonths: activationDuration,
+                      paymentRef: activationPaymentRef.trim(),
+                      notes: activationNotes.trim()
+                    })
+                  }
+                }}
+                className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-sm"
+              >
+                {activateDeviceMutation.isPending ? 'Activating Device...' : 'Confirm & Activate (1 Year Free)'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Suspend Device Modal */}
+      {deviceToSuspend && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-xl bg-card text-foreground p-6 shadow-2xl border border-border space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center gap-2 text-destructive border-b border-border pb-3">
+              <Ban className="h-5 w-5" />
+              <h3 className="text-lg font-bold text-foreground">Suspend AutoBell Device</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Suspending this device will lock its schedules, silence bells, and display an inactive notice on the hardware until reactivated.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">
+                Reason for suspension (optional)
+              </label>
+              <input
+                type="text"
+                value={suspendReason}
+                onChange={(e) => setSuspendReason(e.target.value)}
+                placeholder="e.g. Payment due, Disputed order, Cheque bounced"
+                className="w-full rounded-md border border-input bg-background p-2 text-sm shadow-sm focus:border-destructive focus:ring-destructive text-foreground"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setDeviceToSuspend(null)}
+                className="rounded-md border border-input bg-background px-4 py-2 text-sm text-foreground hover:bg-accent transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={suspendDeviceMutation.isPending}
+                onClick={() => {
+                  if (deviceToSuspend) {
+                    suspendDeviceMutation.mutate({
+                      deviceId: deviceToSuspend.id,
+                      reason: suspendReason.trim()
+                    })
+                  }
+                }}
+                className="inline-flex items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 transition-all shadow-sm"
+              >
+                {suspendDeviceMutation.isPending ? 'Suspending...' : 'Confirm Suspension'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isOtaConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-lg bg-card text-foreground p-6 shadow-lg border border-border">
@@ -985,7 +1905,6 @@ export default function InventoryManagement() {
                     })
                     .map((device) => ({
                       device_id: device.id,
-                      school_id: device.school_id as string,
                       command: 'UPDATE_FIRMWARE',
                       payload: { url }
                     }))
@@ -1009,3 +1928,4 @@ export default function InventoryManagement() {
     </div>
   )
 }
+

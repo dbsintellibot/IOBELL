@@ -3,13 +3,13 @@ let code = fs.readFileSync('src/main_s3.cpp', 'utf8');
 
 // 1. Remove hardcoded SUPABASE_URL and SUPABASE_KEY
 code = code.replace(
-  /const char \*SUPABASE_URL = "https:\/\/zelpaafberhmslyoegzu\.supabase\.co";/,
+  /const char \*SUPABASE_URL = "https:\/\/hjlwzkwiweocnfztshmy\.supabase\.co";/,
   `// Supabase Configuration (Dynamically Loaded)
-char SUPABASE_URL[100] = "";`
+  char SUPABASE_URL[100] = "";`
 );
 
 code = code.replace(
-  /const char \*SUPABASE_KEY =[\s\S]*?"LOuknCbvzw5CryGX2eta2vgkx5IvrE1mxPaUDBBeDD8";/,
+  /const char \*SUPABASE_KEY =[\s\S]*?"OUx-ZWTdA-_BCW8sbIMw8E13CONOh5IjcjLko87RRC0";/,
   `char SUPABASE_KEY[300] = "";`
 );
 

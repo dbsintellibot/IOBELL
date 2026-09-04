@@ -41,9 +41,45 @@ export default function BroadcastScreen() {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   
+  // Pre-Announcement State
+  const [playPreAnnouncementTTS, setPlayPreAnnouncementTTS] = useState(true);
+  const [playPreAnnouncementVoice, setPlayPreAnnouncementVoice] = useState(true);
+  const [schoolPreAnnouncementUrl, setSchoolPreAnnouncementUrl] = useState<string | null>(null);
+  const [schoolPreAnnouncementDelay, setSchoolPreAnnouncementDelay] = useState<number>(3);
+
   // General State
   const [isSending, setIsSending] = useState(false);
   const [permissionResponse, requestPermission] = Audio.usePermissions();
+
+  useEffect(() => {
+    const fetchSchoolPreAnnouncementConfig = async () => {
+      if (!schoolId) return;
+      try {
+        const { data: school, error } = await supabase
+          .from('schools')
+          .select('pre_announcement_enabled, default_pre_announcement_id, pre_announcement_delay_seconds')
+          .eq('id', schoolId)
+          .single();
+
+        if (!error && school && school.default_pre_announcement_id) {
+          const { data: sound } = await supabase
+            .from('pre_announcement_sounds')
+            .select('file_url')
+            .eq('id', school.default_pre_announcement_id)
+            .single();
+
+          if (sound?.file_url) {
+            setSchoolPreAnnouncementUrl(sound.file_url);
+            setSchoolPreAnnouncementDelay(school.pre_announcement_delay_seconds || 3);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching school pre-announcement config:', err);
+      }
+    };
+
+    fetchSchoolPreAnnouncementConfig();
+  }, [schoolId]);
 
   useEffect(() => {
     return () => {
@@ -242,9 +278,13 @@ export default function BroadcastScreen() {
       const commands = devices.map(d => ({
         device_id: d.id,
         command: 'PLAY_URL',
-        payload: { url: publicUrl },
-        status: 'pending',
-        school_id: schoolId
+        payload: {
+          url: publicUrl,
+          play_pre_announcement: playPreAnnouncementVoice,
+          pre_announcement_url: schoolPreAnnouncementUrl || '',
+          pre_announcement_delay_seconds: schoolPreAnnouncementDelay || 3
+        },
+        status: 'pending'
       }));
 
       const { error: cmdError } = await supabase
@@ -253,7 +293,7 @@ export default function BroadcastScreen() {
 
       if (cmdError) throw cmdError;
 
-      Alert.alert('Success', 'Voice note broadcasted successfully!');
+      Alert.alert('Queued', 'Voice note queued successfully! (In Queue - waiting for device execution...)');
       setRecordedUri(null);
     } catch (error: any) {
       console.error('Broadcast failed:', error);
@@ -283,9 +323,15 @@ export default function BroadcastScreen() {
         const commands = devices.map(d => ({
           device_id: d.id,
           command: 'TTS',
-          payload: { text, language: ttsLanguage, voice_gender: googleFreeVoiceGender },
+          payload: {
+            text,
+            language: ttsLanguage,
+            voice_gender: googleFreeVoiceGender,
+            play_pre_announcement: playPreAnnouncementTTS,
+            pre_announcement_url: schoolPreAnnouncementUrl || '',
+            pre_announcement_delay_seconds: schoolPreAnnouncementDelay || 3
+          },
           status: 'pending',
-          school_id: schoolId,
         }));
 
         const { error: cmdError } = await supabase
@@ -294,7 +340,7 @@ export default function BroadcastScreen() {
 
         if (cmdError) throw cmdError;
 
-        Alert.alert('Success', 'Announcement broadcasted successfully!');
+        Alert.alert('Queued', 'Announcement queued successfully! (In Queue - waiting for device execution...)');
         setText('');
       } catch (error: any) {
         console.error('Broadcast failed:', error);
@@ -369,9 +415,13 @@ export default function BroadcastScreen() {
       const commands = devices.map(d => ({
         device_id: d.id,
         command: 'PLAY_URL',
-        payload: { url: publicUrl },
-        status: 'pending',
-        school_id: schoolId
+        payload: {
+          url: publicUrl,
+          play_pre_announcement: playPreAnnouncementTTS,
+          pre_announcement_url: schoolPreAnnouncementUrl || '',
+          pre_announcement_delay_seconds: schoolPreAnnouncementDelay || 3
+        },
+        status: 'pending'
       }));
 
       const { error: cmdError } = await supabase
@@ -380,7 +430,7 @@ export default function BroadcastScreen() {
 
       if (cmdError) throw cmdError;
 
-      Alert.alert('Success', 'Announcement broadcasted successfully!');
+      Alert.alert('Queued', 'Announcement queued successfully! (In Queue - waiting for device execution...)');
       setText('');
     } catch (error: any) {
       console.error('Broadcast failed:', error);
@@ -710,6 +760,16 @@ export default function BroadcastScreen() {
             )}
 
             <TouchableOpacity
+              style={styles.preAnnouncementContainer}
+              onPress={() => setPlayPreAnnouncementTTS(!playPreAnnouncementTTS)}
+            >
+              <View style={[styles.checkbox, playPreAnnouncementTTS && styles.checkboxChecked]}>
+                {playPreAnnouncementTTS && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+              <Text style={styles.preAnnouncementLabel}>Play Pre-Announcement Sound (3s Delay)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={[styles.button, (!text || isSending) && styles.disabledButton]}
               onPress={broadcastText}
               disabled={!text || isSending}
@@ -749,6 +809,16 @@ export default function BroadcastScreen() {
                     <Trash2 color="#DC2626" size={20} />
                   </TouchableOpacity>
                 </View>
+
+                <TouchableOpacity
+                  style={styles.preAnnouncementContainer}
+                  onPress={() => setPlayPreAnnouncementVoice(!playPreAnnouncementVoice)}
+                >
+                  <View style={[styles.checkbox, playPreAnnouncementVoice && styles.checkboxChecked]}>
+                    {playPreAnnouncementVoice && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <Text style={styles.preAnnouncementLabel}>Play Pre-Announcement Sound (3s Delay)</Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.button, isSending && styles.disabledButton]}
@@ -953,5 +1023,40 @@ const styles = StyleSheet.create({
     color: '#A16207',
     fontSize: 16,
     lineHeight: 24,
+  },
+  preAnnouncementContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginVertical: 10,
+    gap: 10,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#4F46E5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'white',
+  },
+  checkboxChecked: {
+    backgroundColor: '#4F46E5',
+  },
+  checkmark: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  preAnnouncementLabel: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+    flex: 1,
   },
 });

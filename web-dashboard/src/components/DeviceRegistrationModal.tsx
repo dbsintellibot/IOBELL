@@ -72,8 +72,11 @@ export function DeviceRegistrationModal({ isOpen, onClose, onRegister }: DeviceR
               required
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Enter the serial number assigned to this device in the Inventory (Super Admin).
+              Enter the serial number printed on the back of your AutoBell controller or box.
             </p>
+            <div className="mt-2 rounded-md bg-emerald-500/10 border border-emerald-500/20 p-2.5 text-xs text-emerald-700 dark:text-emerald-400">
+              🎁 <strong>1-Year Free Cloud Service:</strong> Every genuine AutoBell comes with 12 months of free cloud scheduling, automatic ringing, and remote control upon activation.
+            </div>
           </div>
 
           {error && (

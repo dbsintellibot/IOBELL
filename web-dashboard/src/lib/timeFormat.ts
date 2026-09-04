@@ -37,3 +37,41 @@ export const parseAmPmParts = (timeStr: string) => {
     const [hStr, mStr] = time.split(':');
     return { h: parseInt(hStr), m: parseInt(mStr), ampm: modifier as 'AM' | 'PM' };
 };
+
+export const formatNotificationTime = (dateStr: string | Date | null | undefined): string => {
+  if (!dateStr) return '';
+  let d: Date;
+  if (dateStr instanceof Date) {
+    d = dateStr;
+  } else {
+    let str = String(dateStr).trim();
+    if (str.includes(' ') && !str.includes('T')) {
+      str = str.replace(' ', 'T');
+    }
+    if (!str.includes('Z') && !/[+-]\d{2}:?\d{2}$/.test(str)) {
+      str += 'Z';
+    }
+    d = new Date(str);
+  }
+
+  if (isNaN(d.getTime())) return String(dateStr);
+
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (isToday) {
+    return timeStr;
+  } else if (isYesterday) {
+    return `Yesterday, ${timeStr}`;
+  } else {
+    const dateFormatted = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${dateFormatted}, ${timeStr}`;
+  }
+};
+

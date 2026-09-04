@@ -40,7 +40,6 @@ export default function EmergencyScreen() {
         // We use 'RING' as it plays audio.
         const commands = devices.map(d => ({
           device_id: d.id,
-          school_id: schoolId,
           command: 'RING', 
           payload: { 
             message: 'EMERGENCY TRIGGERED',

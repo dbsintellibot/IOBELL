@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Save, Building, MapPin, Check, Image as ImageIcon } from 'lucide-react'
-import { themes, type ThemeName } from '@/lib/themes'
-import { AutoBellLogoMark } from '@/components/AutoBellLogo'
+import { Save, Building, MapPin, Check, Image as ImageIcon, Volume2, Play, Square, Music } from 'lucide-react'
+import { themes } from '@/lib/themes'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { useDropzone } from 'react-dropzone'
+import { useRef } from 'react'
 
 const settingsSchema = z.object({
   name: z.string().min(2, 'School name is required'),
@@ -20,6 +20,12 @@ const settingsSchema = z.object({
   quietHoursEnabled: z.boolean(),
   quietHoursDisableFrom: z.string(),
   quietHoursEnableAt: z.string(),
+  preAnnouncementEnabled: z.boolean(),
+  defaultPreAnnouncementId: z.string().nullable().optional(),
+  preAnnouncementDelaySeconds: z.number().min(2).max(5),
+  preAnnouncementVolume: z.number().min(1).max(5),
+  defaultTtsGender: z.enum(['female', 'male']),
+  defaultTtsLanguage: z.enum(['en', 'ur', 'ar']),
 })
 
 type SettingsFormValues = z.infer<typeof settingsSchema>
@@ -29,6 +35,8 @@ export default function SchoolSettings() {
   const queryClient = useQueryClient()
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [playingPreId, setPlayingPreId] = useState<string | null>(null)
+  const preAudioRef = useRef<HTMLAudioElement | null>(null)
   const canEdit = role === 'admin'
 
   const {
@@ -48,11 +56,21 @@ export default function SchoolSettings() {
       themeMode: 'dark',
       quietHoursEnabled: false,
       quietHoursDisableFrom: '21:00',
-      quietHoursEnableAt: '07:00'
+      quietHoursEnableAt: '07:00',
+      preAnnouncementEnabled: true,
+      defaultPreAnnouncementId: null,
+      preAnnouncementDelaySeconds: 3,
+      preAnnouncementVolume: 3,
+      defaultTtsGender: 'female',
+      defaultTtsLanguage: 'en',
     }
   })
 
   const quietHoursEnabled = watch('quietHoursEnabled')
+  const preAnnouncementEnabled = watch('preAnnouncementEnabled')
+  const defaultPreAnnouncementId = watch('defaultPreAnnouncementId')
+  const preAnnouncementDelaySeconds = watch('preAnnouncementDelaySeconds')
+  const preAnnouncementVolume = watch('preAnnouncementVolume')
   const themeColor = watch('themeColor')
   const themeMode = watch('themeMode')
 
@@ -63,7 +81,7 @@ export default function SchoolSettings() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('schools')
-        .select('name, campus_name, address, logo_url, theme_color, theme_mode, quiet_hours_enabled, quiet_hours_disable_from, quiet_hours_enable_at')
+        .select('name, campus_name, address, logo_url, theme_color, theme_mode, quiet_hours_enabled, quiet_hours_disable_from, quiet_hours_enable_at, pre_announcement_enabled, default_pre_announcement_id, pre_announcement_delay_seconds, pre_announcement_volume, default_tts_gender, default_tts_language')
         .eq('id', schoolId)
         .single()
       
@@ -71,6 +89,40 @@ export default function SchoolSettings() {
       return data
     }
   })
+
+  // Fetch available pre-announcement sounds
+  const { data: preAnnouncementSounds = [] } = useQuery({
+    queryKey: ['pre_announcement_sounds_active'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pre_announcement_sounds')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+
+      if (error) throw error
+      return data || []
+    }
+  })
+
+  const togglePrePlay = (soundUrl: string, soundId: string) => {
+    if (playingPreId === soundId) {
+      preAudioRef.current?.pause()
+      setPlayingPreId(null)
+    } else {
+      if (preAudioRef.current) {
+        preAudioRef.current.pause()
+      }
+      const audio = new Audio(soundUrl)
+      audio.onended = () => setPlayingPreId(null)
+      audio.play().catch(e => {
+        console.error('Audio play error:', e)
+        setPlayingPreId(null)
+      })
+      preAudioRef.current = audio
+      setPlayingPreId(soundId)
+    }
+  }
 
   useEffect(() => {
     if (school) {
@@ -83,6 +135,12 @@ export default function SchoolSettings() {
         quietHoursEnabled: !!school.quiet_hours_enabled,
         quietHoursDisableFrom: (school.quiet_hours_disable_from || '21:00').slice(0, 5),
         quietHoursEnableAt: (school.quiet_hours_enable_at || '07:00').slice(0, 5),
+        preAnnouncementEnabled: school.pre_announcement_enabled ?? true,
+        defaultPreAnnouncementId: school.default_pre_announcement_id || null,
+        preAnnouncementDelaySeconds: school.pre_announcement_delay_seconds || 3,
+        preAnnouncementVolume: school.pre_announcement_volume || 3,
+        defaultTtsGender: (school.default_tts_gender as 'female' | 'male') || 'female',
+        defaultTtsLanguage: (school.default_tts_language as 'en' | 'ur' | 'ar') || 'en',
       })
       setLogoUrl(school.logo_url)
     }
@@ -100,8 +158,14 @@ export default function SchoolSettings() {
         theme_color: data.themeColor,
         theme_mode: data.themeMode,
         quiet_hours_enabled: data.quietHoursEnabled,
-        quiet_hours_disable_from: data.quietHoursDisableFrom,
-        quiet_hours_enable_at: data.quietHoursEnableAt,
+        quiet_hours_disable_from: data.quietHoursDisableFrom || null,
+        quiet_hours_enable_at: data.quietHoursEnableAt || null,
+        pre_announcement_enabled: data.preAnnouncementEnabled,
+        default_pre_announcement_id: data.defaultPreAnnouncementId || null,
+        pre_announcement_delay_seconds: data.preAnnouncementDelaySeconds,
+        pre_announcement_volume: data.preAnnouncementVolume,
+        default_tts_gender: data.defaultTtsGender,
+        default_tts_language: data.defaultTtsLanguage,
         updated_at: new Date().toISOString(),
       }
 
@@ -111,6 +175,22 @@ export default function SchoolSettings() {
         .eq('id', schoolId)
 
       if (error) throw error
+
+      try {
+        await supabase.functions.invoke('precombine-schedule', { body: { school_id: schoolId } })
+      } catch (err) {
+        console.warn('Precombine trigger error:', err)
+      }
+
+      const { data: devices } = await supabase.from('bell_devices').select('id').eq('school_id', schoolId)
+      if (devices && devices.length > 0) {
+        const commands = devices.map(d => ({
+          device_id: d.id,
+          command: 'SYNC_SCHEDULES',
+          payload: { source: 'school_settings_save' }
+        }))
+        await supabase.from('command_queue').insert(commands)
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['school_settings', schoolId] })
@@ -365,6 +445,233 @@ export default function SchoolSettings() {
                 </div>
               </div>
 
+              {/* Pre-Announcement Audio & Delay */}
+              <div className="pt-6 border-t border-border space-y-4">
+                <div>
+                  <h4 className="text-base font-semibold text-foreground flex items-center gap-2">
+                    <Volume2 className="h-5 w-5 text-blue-500" />
+                    Pre-Announcement Audio & Delay Configuration
+                  </h4>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Automatically plays a chime jingle before scheduled bells, TTS, and broadcasts. (In <i>Profile Editor</i>, set <b>Audio 1</b> directly to your period bell MP3 to avoid duplicate chimes).
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      {...register('preAnnouncementEnabled')}
+                      className="h-4 w-4 rounded border-input text-blue-600 focus:ring-blue-500 bg-background"
+                      disabled={!canEdit}
+                    />
+                    Enable Pre-Announcement Chimes
+                  </label>
+
+                  {preAnnouncementEnabled && (
+                    <div className="space-y-4 pt-2 animate-in fade-in slide-in-from-top-2">
+                      {/* Default Sound Selector Grid */}
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-2">Default Pre-Announcement Sound</label>
+                        {preAnnouncementSounds.length === 0 ? (
+                          <div className="p-4 rounded-lg bg-muted/40 border border-border text-xs text-muted-foreground">
+                            No pre-announcement sounds uploaded by Super Admin yet. Default quiet chime will be used.
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                            {preAnnouncementSounds.map((snd) => {
+                              const isSelected = defaultPreAnnouncementId === snd.id
+                              const isPlaying = playingPreId === snd.id
+                              return (
+                                <div
+                                  key={snd.id}
+                                  onClick={() => {
+                                    if (canEdit) setValue('defaultPreAnnouncementId', snd.id, { shouldDirty: true })
+                                  }}
+                                  className={`relative flex flex-col justify-between p-3.5 rounded-lg border text-left transition-all cursor-pointer ${
+                                    isSelected 
+                                      ? 'bg-blue-500/10 border-blue-500 ring-1 ring-blue-500' 
+                                      : 'bg-background border-input hover:border-muted-foreground/40'
+                                  } ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <Music className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                                      <span className="text-sm font-semibold text-foreground line-clamp-1">{snd.title}</span>
+                                    </div>
+                                    {isSelected && <Check className="h-4 w-4 text-blue-500 flex-shrink-0" />}
+                                  </div>
+
+                                  <div className="flex items-center justify-between mt-3 pt-2 border-t border-border/40 text-xs text-muted-foreground">
+                                    <span>{snd.duration_ms ? `${Math.round(snd.duration_ms/1000)}s` : 'Chime'}</span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        togglePrePlay(snd.file_url, snd.id)
+                                      }}
+                                      className="inline-flex items-center gap-1 text-blue-500 hover:underline font-medium"
+                                    >
+                                      {isPlaying ? (
+                                        <>
+                                          <Square className="h-3 w-3 fill-current" />
+                                          Stop
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Play className="h-3 w-3 fill-current" />
+                                          Preview
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Delay Duration Selector (2 to 5 seconds) */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <label className="block text-sm font-medium text-foreground mb-1.5">
+                            Delay Duration (Between Chime & Audio Payload)
+                          </label>
+                          <select
+                            value={preAnnouncementDelaySeconds}
+                            onChange={(e) => {
+                              if (canEdit) setValue('preAnnouncementDelaySeconds', parseInt(e.target.value), { shouldDirty: true })
+                            }}
+                            disabled={!canEdit}
+                            className="w-full rounded-md border border-input bg-background text-foreground text-sm p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                          >
+                            <option value={2}>2 Seconds</option>
+                            <option value={3}>3 Seconds (Default)</option>
+                            <option value={4}>4 Seconds</option>
+                            <option value={5}>5 Seconds</option>
+                          </select>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Pause interval before the primary bell or broadcast begins playing.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-foreground mb-1.5">
+                            Pre-Announcement Volume Level (1 - 5)
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            {[1, 2, 3, 4, 5].map((level) => {
+                              const isSelected = preAnnouncementVolume === level
+                              return (
+                                <button
+                                  key={level}
+                                  type="button"
+                                  onClick={() => {
+                                    if (canEdit) setValue('preAnnouncementVolume', level, { shouldDirty: true })
+                                  }}
+                                  disabled={!canEdit}
+                                  className={`flex-1 py-1.5 px-2 rounded-md border text-xs font-semibold transition-all ${
+                                    isSelected
+                                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                                      : 'bg-background border-input text-foreground hover:bg-muted/50'
+                                  } ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                  L{level}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {preAnnouncementVolume === 1 && 'Level 1: Quietest chime volume'}
+                            {preAnnouncementVolume === 2 && 'Level 2: Soft chime volume'}
+                            {preAnnouncementVolume === 3 && 'Level 3: Normal default chime volume'}
+                            {preAnnouncementVolume === 4 && 'Level 4: Loud chime volume'}
+                            {preAnnouncementVolume === 5 && 'Level 5: Maximum chime volume'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Default TTS Voice Configuration */}
+              <div className="pt-6 border-t border-border space-y-4">
+                <div>
+                  <h4 className="text-base font-semibold text-foreground flex items-center gap-2">
+                    <Volume2 className="h-5 w-5 text-blue-500" />
+                    Default TTS Voice Configuration
+                  </h4>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Configure the default voice gender used for scheduled announcements (TTS).
+                  </p>
+                </div>
+
+                <div className="space-y-4 max-w-md">
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-2">Default Voice Gender</label>
+                    <div className="flex items-center gap-6">
+                      <label className="inline-flex items-center gap-2 text-sm text-foreground cursor-pointer">
+                        <input
+                          type="radio"
+                          value="female"
+                          {...register('defaultTtsGender')}
+                          disabled={!canEdit}
+                          className="h-4 w-4 border-input text-blue-600 focus:ring-blue-500 bg-background"
+                        />
+                        Female Voice (Google Translate)
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-foreground cursor-pointer">
+                        <input
+                          type="radio"
+                          value="male"
+                          {...register('defaultTtsGender')}
+                          disabled={!canEdit}
+                          className="h-4 w-4 border-input text-blue-600 focus:ring-blue-500 bg-background"
+                        />
+                        Male Voice (StreamElements - Brian)
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-2">Default TTS Language</label>
+                    <select
+                      {...register('defaultTtsLanguage')}
+                      disabled={!canEdit}
+                      className="w-full rounded-md border border-input bg-background text-foreground text-sm p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    >
+                      <option value="en">English</option>
+                      <option value="ur">Urdu (اردو)</option>
+                      <option value="ar">Arabic (العربية)</option>
+                    </select>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      This language will be used for all scheduled announcements unless overridden per time slot.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Notification Preferences Section */}
+              <div className="pt-6 border-t border-border space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-base font-semibold text-foreground flex items-center gap-2">
+                      Notification Preferences & Webhook Channels
+                    </h4>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Customize how you receive real-time updates and audio event alerts.
+                    </p>
+                  </div>
+                  <span className="text-xs bg-sky-500/10 text-sky-400 px-3 py-1 rounded-full font-medium border border-sky-500/20">
+                    Super Admin Controlled
+                  </span>
+                </div>
+
+                <NotificationPreferencesCard schoolId={schoolId} />
+              </div>
+
             </div>
             <div className="px-4 py-3 bg-muted text-right sm:px-6 flex items-center justify-between">
               <span className="text-sm text-muted-foreground">
@@ -383,5 +690,170 @@ export default function SchoolSettings() {
         </div>
       </div>
     </form>
+  )
+}
+
+function NotificationPreferencesCard({ schoolId }: { schoolId: string | null }) {
+  const { user } = useAuth()
+  const [pref, setPref] = useState({
+    toast_enabled: true,
+    sound_enabled: true,
+    bell_dropdown_enabled: true,
+    email_summary_enabled: false,
+    notify_tts: true,
+    notify_voice_note: true,
+    notify_stream: true,
+    notify_ring: true,
+    notify_volume: true,
+    school_webhook_url: ''
+  })
+  const [saving, setSaving] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    if (!user) return
+    const fetchPref = async () => {
+      try {
+        const { data } = await supabase
+          .from('user_notification_preferences')
+          .select('*')
+          .eq('user_id', user.id)
+          .maybeSingle()
+
+        if (data) {
+          setPref({
+            toast_enabled: data.toast_enabled ?? true,
+            sound_enabled: data.sound_enabled ?? true,
+            bell_dropdown_enabled: data.bell_dropdown_enabled ?? true,
+            email_summary_enabled: data.email_summary_enabled ?? false,
+            notify_tts: data.notify_tts ?? true,
+            notify_voice_note: data.notify_voice_note ?? true,
+            notify_stream: data.notify_stream ?? true,
+            notify_ring: data.notify_ring ?? true,
+            notify_volume: data.notify_volume ?? true,
+            school_webhook_url: data.school_webhook_url || ''
+          })
+        }
+      } catch (err) {
+        console.error('Failed to load user preferences:', err)
+      } finally {
+        setLoaded(true)
+      }
+    }
+    fetchPref()
+  }, [user])
+
+  const handleSavePref = async () => {
+    if (!user) return
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from('user_notification_preferences')
+        .upsert(
+          {
+            user_id: user.id,
+            school_id: schoolId,
+            ...pref,
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: 'user_id' }
+        )
+
+      if (error) throw error
+      toast.success('Notification preferences updated successfully!')
+    } catch (err: any) {
+      toast.error('Failed to save notification preferences: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!loaded) return <div className="text-xs text-muted-foreground py-2">Loading preferences...</div>
+
+  return (
+    <div className="space-y-4 rounded-lg bg-background p-4 border border-border">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <label className="flex items-center gap-2 p-2.5 rounded bg-muted/40 border border-border/40 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pref.toast_enabled}
+            onChange={(e) => setPref({ ...pref, toast_enabled: e.target.checked })}
+            className="rounded border-input text-blue-600 focus:ring-blue-500 accent-blue-600"
+          />
+          <div>
+            <p className="font-semibold text-foreground">In-App Floating Toasts</p>
+            <p className="text-[11px] text-muted-foreground">Display instant popups for command events</p>
+          </div>
+        </label>
+
+        <label className="flex items-center gap-2 p-2.5 rounded bg-muted/40 border border-border/40 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pref.sound_enabled}
+            onChange={(e) => setPref({ ...pref, sound_enabled: e.target.checked })}
+            className="rounded border-input text-blue-600 focus:ring-blue-500 accent-blue-600"
+          />
+          <div>
+            <p className="font-semibold text-foreground">Notification Sound Chime</p>
+            <p className="text-[11px] text-muted-foreground">Play gentle audio tone on arrival</p>
+          </div>
+        </label>
+
+        <label className="flex items-center gap-2 p-2.5 rounded bg-muted/40 border border-border/40 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pref.notify_tts}
+            onChange={(e) => setPref({ ...pref, notify_tts: e.target.checked })}
+            className="rounded border-input text-blue-600 focus:ring-blue-500 accent-blue-600"
+          />
+          <div>
+            <p className="font-semibold text-foreground">TTS Announcement Alerts</p>
+            <p className="text-[11px] text-muted-foreground">Queued & Executed status notifications</p>
+          </div>
+        </label>
+
+        <label className="flex items-center gap-2 p-2.5 rounded bg-muted/40 border border-border/40 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pref.notify_voice_note}
+            onChange={(e) => setPref({ ...pref, notify_voice_note: e.target.checked })}
+            className="rounded border-input text-blue-600 focus:ring-blue-500 accent-blue-600"
+          />
+          <div>
+            <p className="font-semibold text-foreground">Voice Note Broadcast Alerts</p>
+            <p className="text-[11px] text-muted-foreground">Audio recording execution feedback</p>
+          </div>
+        </label>
+      </div>
+
+      <div className="pt-2">
+        <label className="block text-xs font-medium text-foreground mb-1">School Channel Webhook URL (Slack / Teams)</label>
+        <input
+          type="url"
+          placeholder="https://hooks.slack.com/services/..."
+          value={pref.school_webhook_url}
+          onChange={(e) => setPref({ ...pref, school_webhook_url: e.target.value })}
+          className="w-full rounded-md border border-input bg-background text-foreground text-xs p-2 font-mono"
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Receive automated campus audio events directly in your school staff chat channel.
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between pt-2 border-t border-border/40">
+        <span className="text-[11px] text-amber-500 font-medium">
+          🛡️ Emergency Stop & Device Offline alerts are enforced by Super Admin.
+        </span>
+        <button
+          type="button"
+          onClick={handleSavePref}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          <Save className="h-3.5 w-3.5" />
+          {saving ? 'Saving...' : 'Save Preferences'}
+        </button>
+      </div>
+    </div>
   )
 }

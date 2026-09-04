@@ -1,41 +1,52 @@
-# AutoBell - SaaS Bell Management System
+# AutoBell - Smart Cloud-Based Bell Management System
 
-AutoBell is a smart IoT solution designed to modernize school bell systems. It allows school administrators to manage bell schedules remotely via a web dashboard or mobile app, with reliable execution by ESP32-based controllers installed on-site.
+AutoBell is an enterprise-grade IoT solution designed to modernize school bell schedules, automated announcements, emergency alerts, and audio broadcasting. School administrators manage daily operations remotely via a sleek Web Dashboard or Android Mobile App, with offline-first execution handled by ESP32-based controllers installed on-site.
 
 **Live Dashboard:** [https://iobell.web.app/](https://iobell.web.app/)
 
-## System Overview
+---
 
-The system connects physical bells to the cloud using secure IoT devices, enabling:
-*   **Remote Scheduling:** Create and modify schedules from anywhere.
-*   **Emergency Triggers:** Instantly ring bells for emergencies via the app.
-*   **Multi-School Management:** SaaS architecture supporting multiple independent schools.
-*   **Offline Reliability:** Devices store schedules locally to ensure operation even during internet outages.
-*   **Backup & Restore:** Complete data safety with full database, schedule, log, and MP3 media backup and restore functionality.
-*   **Hardware Watchdog:** Unmatched reliability with automatic freeze recovery.
+## 🌟 Key Features & Core Capabilities
 
-## Architecture
+*   **Cloud-Based Remote Scheduling:** Create, manage, and switch profile schedules (Normal Day, Exam Mode, Ramadan, Weekend) from anywhere.
+*   **System-Wide Pre-Announcement Audio Jingle & Delay:** School Admins can select a signature pre-announcement chime from a global library and set a custom pause delay (2–5 seconds) before any bell, TTS notice, voice note, or announcement plays.
+*   **Text-to-Speech (TTS) & Live Broadcasts:** Schedule automated TTS spoken announcements or broadcast live/recorded voice messages instantly from web or mobile.
+*   **Offline-First Reliability:** ESP32 controllers cache all profiles and schedule JSON locally in LittleFS/SPIFFS. Bells ring on time even during Wi-Fi or internet outages.
+*   **Hardware Watchdog (100% Uptime):** Built-in automatic hardware freeze recovery ensures zero manual restarts or downtime.
+*   **Instant Emergency Triggers:** Dedicated lockdown and emergency alarm modes accessible via authorized mobile apps and web dashboards.
+*   **Full Data Backup & Restore:** Complete data safety with 1-click backup and restore for database records, active schedules, diagnostic logs, and uploaded MP3 audio media.
+*   **Partner & Reseller Portal:** Dedicated portal for school IT vendors and distributors to manage leads, deals, payments, commissions, and customer onboarding.
+*   **Multi-Tenant SaaS Security:** Powered by Supabase PostgreSQL with strict Row Level Security (RLS) and Role-Based Access Control (Super Admin, School Admin, Operator, Partner).
+*   **Zero-Downtime Backup Device Guarantee:** Optional yearly SaaS agreement providing immediate hardware replacement from central inventory.
 
-For a deep dive into the system architecture, data flow diagrams, and security strategy, please see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
+---
 
-## Technology Stack
+## 🏗️ System Architecture
 
-*   **Frontend Web:** React (Vite) + Tailwind CSS + Shadcn UI
-*   **Mobile App:** React Native (Expo)
-*   **Backend:** Supabase (PostgreSQL, GoTrue, Edge Functions)
-*   **IoT Firmware:** C++ (PlatformIO / Arduino) for ESP32
+For detailed architectural diagrams, data flow specifications, and security policies, see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
 
-## Project Structure
+---
 
-*   `esp32-firmware/`: C++ firmware for the IoT bell controller (PlatformIO/Arduino).
-*   `mobile-app/`: React Native (Expo) application for mobile management.
-*   `web-dashboard/`: React (Vite) web application for administrators and super admins.
-*   `supabase/`: Database migrations, schema definitions, and Edge Functions.
-*   `voice files/`: Pre-recorded voice announcements and bell sounds.
-*   `prompts/`: Documentation and historical design prompts used for AI generation.
-*   `ARCHITECTURE.md`: Detailed system architecture and data flow documentation.
-*   `API_CONTRACT.md`: Communication protocol between IoT devices and the backend.
-*   `USER_MANUAL.md`: Guide for end-users on how to use the system.
-*   `TROUBLESHOOTING.md`: Guide for diagnosing and fixing common issues.
-*   `AutoBell_Features_20Feb2026.md`: Detailed list of system features and modules.
+## 💻 Technology Stack
 
+*   **Frontend Web Dashboard:** React (Vite) + Tailwind CSS + Shadcn UI + React Router
+*   **Mobile App:** React Native (Expo) Android WebView wrapper
+*   **Backend Services:** Supabase (PostgreSQL, GoTrue Auth, Storage Buckets, Edge Functions)
+*   **IoT Firmware:** C++ (PlatformIO / Arduino Framework) for ESP32 (40-pin, Wemos, ESP32-S3)
+
+---
+
+## 📁 Project Structure
+
+*   `web-dashboard/`: React web dashboard for School Admins, Super Admins, Operators, and Reseller Partners.
+*   `mobile-app/`: React Native (Expo) app for Android devices.
+*   `esp32-firmware/`: C++ firmware for ESP32 IoT bell controllers.
+*   `supabase/`: Database migrations, RLS policies, storage bucket rules, and Edge Functions.
+*   `docs/`: Detailed feature snapshots, user manuals, troubleshooting guides, and marketing kits.
+    *   `docs/AutoBell_Marketing_Kit.md`: Comprehensive marketing kit, ad copy, video scripts, and AI video prompts.
+    *   `docs/AutoBell_Features_20Feb2026.md`: Complete feature & module snapshot.
+*   `marketing.md`: Product positioning, value proposition, and core promotional messaging.
+*   `USER_MANUAL.md`: Step-by-step operational guide for end users and administrators.
+*   `ARCHITECTURE.md`: System architecture and data flow documentation.
+*   `API_CONTRACT.md`: Device-to-backend communication protocol.
+*   `TROUBLESHOOTING.md`: Diagnostic guide for troubleshooting.

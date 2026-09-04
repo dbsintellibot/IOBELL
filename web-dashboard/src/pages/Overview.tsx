@@ -1,11 +1,79 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { Bell, Wifi, Calendar, HardDrive, MapPin, Activity } from 'lucide-react'
+import { Bell, Wifi, Calendar, HardDrive, MapPin, Activity, CheckCircle, Clock, AlertTriangle, Radio, Megaphone, Mic, Play } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { motion } from 'framer-motion'
+import { useState, useEffect } from 'react'
+import { formatNotificationTime } from '@/lib/timeFormat'
 
 export default function Overview() {
   const { schoolId } = useAuth()
+
+  const [recentLogs, setRecentLogs] = useState<Array<{
+    id: string
+    message: string
+    level: string
+    created_at: string
+    device_name?: string
+  }>>([])
+
+  useEffect(() => {
+    if (!schoolId) return
+
+    const fetchLogs = async () => {
+      const { data: devices } = await supabase.from('bell_devices').select('id, name').eq('school_id', schoolId)
+      if (!devices || devices.length === 0) return
+      const deviceMap = new Map(devices.map(d => [d.id, d.name]))
+      const deviceIds = devices.map(d => d.id)
+
+      const { data: logs } = await supabase
+        .from('device_logs')
+        .select('id, message, level, created_at, device_id')
+        .in('device_id', deviceIds)
+        .order('created_at', { ascending: false })
+        .limit(15)
+
+      if (logs) {
+        setRecentLogs(logs.map(log => ({
+          id: log.id,
+          message: log.message,
+          level: log.level || 'info',
+          created_at: log.created_at,
+          device_name: deviceMap.get(log.device_id) || 'School Device'
+        })))
+      }
+    }
+
+    fetchLogs()
+
+    const channel = supabase
+      .channel(`overview-activity-${schoolId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'device_logs' },
+        async (payload) => {
+          const newLog = payload.new as any
+          const { data: dev } = await supabase.from('bell_devices').select('name').eq('id', newLog.device_id).eq('school_id', schoolId).maybeSingle()
+          if (!dev) return
+
+          setRecentLogs(prev => [
+            {
+              id: newLog.id || Math.random().toString(),
+              message: newLog.message,
+              level: newLog.level || 'info',
+              created_at: newLog.created_at || new Date().toISOString(),
+              device_name: dev.name
+            },
+            ...prev.slice(0, 14)
+          ])
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [schoolId])
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ['overview-stats', schoolId],
@@ -26,8 +94,10 @@ export default function Overview() {
       const audioFilesRes = await supabase
         .from('audio_files')
         .select('id', { count: 'exact', head: true })
+        .not('storage_path', 'ilike', 'combined/%')
 
       let schoolName = 'My School'
+      let pendingCommandsCount = 0
       if (schoolId) {
         const schoolRes = await supabase
           .from('schools')
@@ -38,18 +108,36 @@ export default function Overview() {
         if (!schoolRes.error && schoolRes.data) {
           schoolName = schoolRes.data.name
         }
+
+        // Fetch device IDs to get command queue count
+        const { data: devices } = await supabase
+          .from('bell_devices')
+          .select('id')
+          .eq('school_id', schoolId)
+
+        if (devices && devices.length > 0) {
+          const deviceIds = devices.map(d => d.id)
+          const { count } = await supabase
+            .from('command_queue')
+            .select('id', { count: 'exact', head: true })
+            .in('device_id', deviceIds)
+            .eq('status', 'pending')
+          pendingCommandsCount = count ?? 0
+        }
       }
 
       const primaryOnlineRes = await supabase
         .from('bell_devices')
-        .select('name, mac_address, location')
+        .select('id, name, mac_address, status, last_heartbeat, volume, firmware_version, board_type, input_voltage_mv, location_area, location_city, location_country, location_continent')
+        .eq('school_id', schoolId)
         .eq('status', 'online')
         .limit(1)
         .maybeSingle()
 
       const firstDeviceRes = await supabase
         .from('bell_devices')
-        .select('name, mac_address, location')
+        .select('id, name, mac_address, status, last_heartbeat, volume, firmware_version, board_type, input_voltage_mv, location_area, location_city, location_country, location_continent')
+        .eq('school_id', schoolId)
         .limit(1)
         .maybeSingle()
 
@@ -60,6 +148,7 @@ export default function Overview() {
         onlineDevices: onlineDevicesRes.count ?? 0,
         totalProfiles: totalProfilesRes.count ?? 0,
         audioFilesCount: audioFilesRes.count ?? 0,
+        pendingCommandsCount,
         schoolName,
         primaryDevice
       }
@@ -71,8 +160,17 @@ export default function Overview() {
 
   if (isLoading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
+      <div className="space-y-6 animate-pulse p-2">
+        <div className="h-8 w-48 bg-muted rounded-lg" />
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="col-span-1 md:col-span-2 h-44 bg-muted rounded-xl" />
+          <div className="h-44 bg-muted rounded-xl" />
+          <div className="h-44 bg-muted rounded-xl" />
+        </div>
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="h-64 bg-muted rounded-xl" />
+          <div className="h-64 bg-muted rounded-xl" />
+        </div>
       </div>
     )
   }
@@ -99,6 +197,7 @@ export default function Overview() {
 
   const profileCount = stats?.totalProfiles ?? 0
   const audioCount = stats?.audioFilesCount ?? 0
+  const pendingCommandsCount = stats?.pendingCommandsCount ?? 0
 
   const resourceData = [
     { label: 'Profiles', value: profileCount, color: 'bg-sky-500' },
@@ -134,21 +233,55 @@ export default function Overview() {
           </div>
           {stats?.primaryDevice ? (
             <div className="mt-4 relative z-10">
-               <p className="text-2xl font-bold">{stats.primaryDevice.name}</p>
-               <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+               <p className="text-2xl font-bold">{stats.primaryDevice.name || 'Unnamed Device'}</p>
+               <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                  <div>
                    <p className="text-emerald-100 text-xs uppercase tracking-wider">MAC Address</p>
-                   <p className="font-mono text-white/90">{stats.primaryDevice.mac_address}</p>
+                   <p className="font-mono text-white/90 truncate">{stats.primaryDevice.mac_address || 'N/A'}</p>
                  </div>
-                 {stats.primaryDevice.location && (
-                   <div>
-                    <p className="text-emerald-100 text-xs uppercase tracking-wider">Location</p>
-                     <div className="flex items-center text-white/90">
-                       <MapPin className="mr-1 h-3 w-3" />
-                       {stats.primaryDevice.location}
-                     </div>
-                   </div>
-                 )}
+                 <div>
+                   <p className="text-emerald-100 text-xs uppercase tracking-wider">Location</p>
+                    <div className="flex items-center text-white/90 truncate">
+                      <MapPin className="mr-1 h-3 w-3 shrink-0" />
+                      <span className="truncate">
+                         {[
+                           stats.primaryDevice.location_area,
+                           stats.primaryDevice.location_city,
+                           stats.primaryDevice.location_country,
+                           stats.primaryDevice.location_continent
+                         ].filter(val => val && val.trim().toLowerCase() !== 'null' && val.trim().toLowerCase() !== 'undefined').join(', ') || 'N/A'}
+                      </span>
+                    </div>
+                 </div>
+                 <div>
+                   <p className="text-emerald-100 text-xs uppercase tracking-wider">Status</p>
+                   <p className="text-white/90 truncate">
+                     {stats.primaryDevice.status === 'online' ? '🟢 Online' : '🔴 Offline'}
+                     {stats.primaryDevice.last_heartbeat ? ` (${new Date(stats.primaryDevice.last_heartbeat).toLocaleTimeString()})` : ''}
+                   </p>
+                 </div>
+                 <div>
+                   <p className="text-emerald-100 text-xs uppercase tracking-wider">Volume</p>
+                   <p className="text-white/90">
+                     {stats.primaryDevice.volume !== null && stats.primaryDevice.volume !== undefined
+                       ? `${stats.primaryDevice.volume}/21`
+                       : 'N/A'}
+                   </p>
+                 </div>
+                 <div>
+                   <p className="text-emerald-100 text-xs uppercase tracking-wider">Firmware</p>
+                   <p className="text-white/90 truncate">
+                     {stats.primaryDevice.firmware_version || 'N/A'}
+                   </p>
+                 </div>
+                  <div>
+                    <p className="text-emerald-100 text-xs uppercase tracking-wider">Input Power</p>
+                    <p className="text-white/90">
+                      {typeof stats.primaryDevice.input_voltage_mv === 'number'
+                        ? `${(stats.primaryDevice.input_voltage_mv / 1000).toFixed(2)} V (${stats.primaryDevice.input_voltage_mv >= 4500 ? 'Mains' : 'Battery'})`
+                        : 'N/A'}
+                    </p>
+                  </div>
                </div>
             </div>
           ) : (
@@ -202,6 +335,21 @@ export default function Overview() {
             </div>
             <p className="mt-4 text-3xl font-bold text-foreground">{audioCount}</p>
              <p className="text-sm text-muted-foreground">Uploaded files</p>
+        </motion.div>
+
+        <motion.div 
+          variants={item}
+          whileHover={{ y: -5 }}
+          className="rounded-xl bg-card/70 p-6 shadow-lg border border-border"
+        >
+            <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-muted-foreground">Pending Commands</h3>
+                <div className="rounded-full bg-amber-500/10 p-2">
+                  <Clock className="h-4 w-4 text-amber-400" />
+                </div>
+            </div>
+            <p className="mt-4 text-3xl font-bold text-foreground">{pendingCommandsCount}</p>
+             <p className="text-sm text-muted-foreground">Commands in queue</p>
         </motion.div>
       </div>
 
@@ -283,10 +431,86 @@ export default function Overview() {
           <Activity className="h-5 w-5 text-sky-400" />
           <h3 className="text-lg font-medium text-foreground">Recent Activity</h3>
         </div>
-        <div className="space-y-4">
-            <div className="flex items-center justify-center py-8 text-muted-foreground bg-muted rounded-lg border border-dashed border-border">
-              <p className="text-sm">No recent activity logs available.</p>
+        <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+          {recentLogs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 px-4 text-center text-muted-foreground bg-muted/30 rounded-xl border border-dashed border-border/70 space-y-2">
+              <Activity className="h-8 w-8 text-muted-foreground/40 stroke-1" />
+              <p className="text-sm font-medium text-foreground">No recent hardware activity logs</p>
+              <p className="text-xs text-muted-foreground max-w-sm">Device events, scheduled bell rings, TTS broadcasts, and system commands will appear here in real-time.</p>
             </div>
+          ) : (
+            recentLogs.map((log) => {
+              const isInQueue = log.level === 'in queue' || log.message.includes('[In Queue]')
+              const isSuccess = log.level === 'success' || log.message.includes('[Ran Successfully]')
+              const isError = log.level === 'error'
+              const isTts = log.message.toLowerCase().includes('tts')
+              const isVoice = log.message.toLowerCase().includes('voice note')
+              const isPlay = log.message.toLowerCase().includes('play_url') || log.message.toLowerCase().includes('playback')
+
+              return (
+                <div
+                  key={log.id}
+                  className="flex items-start justify-between rounded-lg bg-card p-3.5 shadow-sm border border-border/60 transition-all hover:bg-accent/40 gap-3"
+                >
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div
+                      className={`mt-0.5 rounded-full p-2 flex-shrink-0 ${
+                        isInQueue
+                          ? 'bg-amber-500/10 text-amber-500'
+                          : isSuccess
+                          ? 'bg-emerald-500/10 text-emerald-500'
+                          : isError
+                          ? 'bg-red-500/10 text-red-500'
+                          : 'bg-sky-500/10 text-sky-500'
+                      }`}
+                    >
+                      {isTts ? (
+                        <Megaphone className="h-4 w-4" />
+                      ) : isVoice ? (
+                        <Mic className="h-4 w-4" />
+                      ) : isPlay ? (
+                        <Play className="h-4 w-4" />
+                      ) : isInQueue ? (
+                        <Clock className="h-4 w-4" />
+                      ) : isSuccess ? (
+                        <CheckCircle className="h-4 w-4" />
+                      ) : isError ? (
+                        <AlertTriangle className="h-4 w-4" />
+                      ) : (
+                        <Radio className="h-4 w-4" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-foreground truncate">
+                          {log.device_name}
+                        </span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase ${
+                            isInQueue
+                              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                              : isSuccess
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                              : isError
+                              ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+                              : 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                          }`}
+                        >
+                          {isInQueue ? 'In Queue' : isSuccess ? 'Ran Successfully' : isError ? 'Error' : 'Info'}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground leading-relaxed break-words">
+                        {log.message.replace(/^\[(In Queue|Ran Successfully)\]\s*/i, '')}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground flex-shrink-0 font-mono mt-0.5">
+                    {formatNotificationTime(log.created_at)}
+                  </span>
+                </div>
+              )
+            })
+          )}
         </div>
       </motion.div>
     </motion.div>

@@ -16,5 +16,9 @@ export function IndexRedirect() {
     return <Navigate to="/super-admin" replace />
   }
 
+  if (role === 'partner') {
+    return <Navigate to="/partner" replace />
+  }
+
   return <Navigate to="/dashboard" replace />
 }

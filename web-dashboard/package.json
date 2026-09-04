@@ -9,8 +9,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "preview": "vite preview",
-    "firebase:login": "firebase login",
-    "firebase:deploy": "npm run build && firebase deploy"
+    "firebase:deploy": "npm run build && node --env-file=.env.local run-cli.js firebase deploy",
+    "supabase:db:push": "node --env-file=.env.local run-cli.js npx supabase db push",
+    "supabase:db:pull": "node --env-file=.env.local run-cli.js npx supabase db pull"
   },
   "dependencies": {
     "@capacitor/android": "^8.1.0",

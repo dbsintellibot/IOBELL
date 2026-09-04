@@ -23,7 +23,7 @@ export async function generateSchoolBackup(schoolId: string, schoolName: string,
     { name: 'schools', query: supabase.from('schools').select('*').eq('id', schoolId).single() },
     { name: 'users', query: supabase.from('users').select('*').eq('school_id', schoolId) },
     { name: 'bell_devices', query: supabase.from('bell_devices').select('*').eq('school_id', schoolId) },
-    { name: 'audio_files', query: supabase.from('audio_files').select('*').eq('school_id', schoolId) },
+    { name: 'audio_files', query: supabase.from('audio_files').select('*').eq('school_id', schoolId).not('storage_path', 'ilike', 'combined/%') },
     { name: 'bell_profiles', query: supabase.from('bell_profiles').select('*').eq('school_id', schoolId) },
   ]
 
@@ -250,7 +250,7 @@ export async function generatePlatformBackup(userId: string) {
     { name: 'schools', query: supabase.from('schools').select('*') },
     { name: 'users', query: supabase.from('users').select('*') },
     { name: 'bell_devices', query: supabase.from('bell_devices').select('*') },
-    { name: 'audio_files', query: supabase.from('audio_files').select('*') },
+    { name: 'audio_files', query: supabase.from('audio_files').select('*').not('storage_path', 'ilike', 'combined/%') },
     { name: 'bell_profiles', query: supabase.from('bell_profiles').select('*') },
     { name: 'bell_times', query: supabase.from('bell_times').select('*') },
     { name: 'device_logs', query: supabase.from('device_logs').select('*') },

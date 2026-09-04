@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "author": "AutoBell Virtual Environment",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd",
+      "top": -200,
+      "left": 250,
+      "attrs": { "pins": "i2c" }
+    },
+    {
+      "type": "wokwi-pcf8574",
+      "id": "pcf",
+      "top": -100,
+      "left": 250,
+      "attrs": { "addr": "0x27" }
+    },
+    {
+      "type": "wokwi-ds3231",
+      "id": "rtc",
+      "top": 150,
+      "left": 250,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_power",
+      "top": -150,
+      "left": -200,
+      "attrs": { "color": "red", "label": "Power LED" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": -90,
+      "left": -200,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_wifi",
+      "top": -50,
+      "left": -200,
+      "attrs": { "color": "green", "label": "WiFi Status LED" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 10,
+      "left": -200,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buzzer",
+      "top": 150,
+      "left": -200,
+      "attrs": { "label": "Buzzer" }
+    },
+    {
+      "type": "wokwi-i2s-dac",
+      "id": "dac",
+      "top": 250,
+      "left": 0,
+      "attrs": { "label": "PCM5102A I2S DAC" }
+    },
+    {
+      "type": "wokwi-speaker",
+      "id": "speaker",
+      "top": 250,
+      "left": 250,
+      "attrs": { "label": "Audio Amplifier + Speaker" }
+    }
+  ],
+  "connections": [
+    [ "esp:8", "pcf:SDA", "blue", [ "h0" ] ],
+    [ "esp:9", "pcf:SCL", "yellow", [ "h0" ] ],
+    [ "esp:5V", "pcf:VCC", "red", [ "h0" ] ],
+    [ "esp:GND.1", "pcf:GND", "black", [ "h0" ] ],
+
+    [ "pcf:VSS", "lcd:VSS", "black", [] ],
+    [ "pcf:VDD", "lcd:VDD", "red", [] ],
+    [ "pcf:V0", "lcd:V0", "white", [] ],
+    [ "pcf:RS", "lcd:RS", "blue", [] ],
+    [ "pcf:RW", "lcd:RW", "blue", [] ],
+    [ "pcf:E", "lcd:E", "blue", [] ],
+    [ "pcf:D4", "lcd:D4", "purple", [] ],
+    [ "pcf:D5", "lcd:D5", "purple", [] ],
+    [ "pcf:D6", "lcd:D6", "purple", [] ],
+    [ "pcf:D7", "lcd:D7", "purple", [] ],
+    [ "pcf:A", "lcd:A", "red", [] ],
+    [ "pcf:K", "lcd:K", "black", [] ],
+
+    [ "esp:8", "rtc:SDA", "blue", [ "h0" ] ],
+    [ "esp:9", "rtc:SCL", "yellow", [ "h0" ] ],
+    [ "esp:3V3", "rtc:VCC", "red", [ "h0" ] ],
+    [ "esp:GND.1", "rtc:GND", "black", [ "h0" ] ],
+
+    [ "esp:13", "led_power:A", "red", [] ],
+    [ "led_power:C", "r1:1", "black", [] ],
+    [ "r1:2", "esp:GND.1", "black", [] ],
+
+    [ "esp:2", "led_wifi:A", "green", [] ],
+    [ "led_wifi:C", "r2:1", "black", [] ],
+    [ "r2:2", "esp:GND.1", "black", [] ],
+
+    [ "esp:15", "buzzer:1", "red", [] ],
+    [ "esp:GND.1", "buzzer:2", "black", [] ],
+
+    [ "esp:14", "dac:DIN", "blue", [] ],
+    [ "esp:38", "dac:BCK", "yellow", [] ],
+    [ "esp:4", "dac:LCK", "green", [] ],
+    [ "esp:3V3", "dac:VCC", "red", [] ],
+    [ "esp:GND.1", "dac:GND", "black", [] ],
+
+    [ "dac:OUTL", "speaker:1", "red", [] ],
+    [ "dac:GND", "speaker:2", "black", [] ]
+  ],
+  "dependencies": {}
+}

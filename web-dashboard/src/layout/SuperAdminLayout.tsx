@@ -1,12 +1,11 @@
 import { useAuth } from '@/hooks/useAuth'
 import { Link, Outlet, useLocation } from 'react-router-dom'
-import { LayoutDashboard, School, Package, LogOut, Menu, X, Users, DatabaseBackup } from 'lucide-react'
+import { LayoutDashboard, School, Package, LogOut, Menu, X, Users, DatabaseBackup, Handshake, BellRing, Volume2, Activity, Ticket, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
-import { AutoBellLogoMark } from '@/components/AutoBellLogo'
 
 export default function SuperAdminLayout() {
-  const { signOut, user } = useAuth()
+  const { signOut, user, isImpersonating } = useAuth()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -14,7 +13,13 @@ export default function SuperAdminLayout() {
     { name: 'Overview', href: '/super-admin', icon: LayoutDashboard },
     { name: 'School Management', href: '/super-admin/schools', icon: School },
     { name: 'User Management', href: '/super-admin/users', icon: Users },
+    { name: 'Partner Management', href: '/super-admin/partners', icon: Handshake },
+    { name: 'Notification Policy', href: '/super-admin/notifications', icon: BellRing },
+    { name: 'Pre-Announcements', href: '/super-admin/pre-announcements', icon: Volume2 },
     { name: 'Inventory', href: '/super-admin/inventory', icon: Package },
+    { name: 'System Health', href: '/super-admin/health', icon: Activity },
+    { name: 'Support Tickets', href: '/super-admin/tickets', icon: Ticket },
+    { name: 'Enterprise Reports', href: '/super-admin/reports', icon: FileText },
     { name: 'Backups & Restore', href: '/super-admin/backups', icon: DatabaseBackup }
   ]
 
@@ -25,7 +30,10 @@ export default function SuperAdminLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-background via-muted to-background text-foreground">
+    <div className={cn(
+      "flex h-screen bg-gradient-to-br from-background via-muted to-background text-foreground",
+      isImpersonating && "pt-10"
+    )}>
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
           <div className="fixed inset-0 bg-black/50" onClick={() => setMobileMenuOpen(false)}></div>
@@ -38,9 +46,8 @@ export default function SuperAdminLayout() {
                 <X className="h-6 w-6 text-foreground" />
               </button>
             </div>
-            <div className="flex flex-shrink-0 items-center px-4">
-              <AutoBellLogoMark className="h-9 w-9" />
-              <span className="ml-2 text-xl font-bold">AutoBell Super</span>
+            <div className="flex flex-shrink-0 items-center justify-center px-4 py-1">
+              <img src="/logo.png" alt="AutoBell Logo" className="h-11 w-auto max-h-11 object-contain rounded-xl drop-shadow-sm" />
             </div>
             <div className="mt-5 h-0 flex-1 overflow-y-auto">
               <nav className="space-y-1 px-2">
@@ -52,14 +59,14 @@ export default function SuperAdminLayout() {
                     className={cn(
                       'group flex items-center rounded-md px-2 py-2 text-base font-medium',
                       isActive(item.href)
-                        ? 'bg-primary/20 text-primary'
+                        ? 'bg-primary text-primary-foreground shadow-sm'
                         : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                     )}
                   >
                     <item.icon
                       className={cn(
                         'mr-4 h-6 w-6 flex-shrink-0',
-                        isActive(item.href) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                        isActive(item.href) ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'
                       )}
                     />
                     {item.name}
@@ -90,8 +97,7 @@ export default function SuperAdminLayout() {
 
       <div className="hidden w-64 flex-col bg-card/70 shadow-xl border-r border-border backdrop-blur md:flex">
         <div className="flex h-16 items-center justify-center border-b border-border px-4">
-          <AutoBellLogoMark className="h-9 w-9" />
-          <span className="ml-2 text-xl font-bold">AutoBell Super</span>
+          <img src="/logo.png" alt="AutoBell Logo" className="h-11 w-auto max-h-11 object-contain rounded-xl drop-shadow-sm" />
         </div>
         <nav className="flex-1 space-y-1 px-2 py-4">
           {navigation.map((item) => (
@@ -101,14 +107,14 @@ export default function SuperAdminLayout() {
               className={cn(
                 'group flex items-center rounded-md px-2 py-2 text-sm font-medium transition-colors',
                 isActive(item.href)
-                  ? 'bg-primary/20 text-primary'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground'
               )}
             >
               <item.icon
                 className={cn(
                   'mr-3 h-5 w-5 flex-shrink-0',
-                  isActive(item.href) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                  isActive(item.href) ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'
                 )}
               />
               {item.name}
@@ -129,7 +135,7 @@ export default function SuperAdminLayout() {
             Sign Out
           </button>
           <div className="mt-4 px-2 text-xs text-muted-foreground">
-            v1.1 (Buzzer Test)
+            v1.2 (Enterprise Hardened)
           </div>
         </div>
       </div>
@@ -147,7 +153,14 @@ export default function SuperAdminLayout() {
               {navigation.find(n => isActive(n.href))?.name || 'Super Admin'}
             </h1>
           </div>
-          <div className="flex items-center gap-3 text-xs md:text-sm text-muted-foreground">
+          <div className="flex items-center gap-4 text-xs md:text-sm text-muted-foreground">
+            <Link
+              to="/super-admin/partners"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 font-semibold text-xs border border-indigo-500/30 transition-all shadow-sm"
+            >
+              <Handshake className="h-4 w-4" />
+              Manage Partners
+            </Link>
             <div className="text-right">
               <div className="font-medium text-foreground">Super Admin</div>
               <div className="font-mono text-muted-foreground">{user?.email}</div>

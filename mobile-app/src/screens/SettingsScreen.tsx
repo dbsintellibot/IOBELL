@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, TextInput, ScrollView, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, TextInput, ScrollView, Image, ActivityIndicator, Switch } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { useNavigation } from '@react-navigation/native';
-import { LogOut, Bell, ShieldAlert, Building, MapPin, Save, Upload } from 'lucide-react-native';
+import { LogOut, Bell, ShieldAlert, Building, MapPin, Save, Upload, Volume2, Music, Check } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function SettingsScreen() {
@@ -14,6 +14,11 @@ export default function SettingsScreen() {
   const [campusName, setCampusName] = useState('');
   const [address, setAddress] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [preAnnouncementEnabled, setPreAnnouncementEnabled] = useState(true);
+  const [defaultPreAnnouncementId, setDefaultPreAnnouncementId] = useState<string | null>(null);
+  const [preAnnouncementDelaySeconds, setPreAnnouncementDelaySeconds] = useState<number>(3);
+  const [preAnnouncementVolume, setPreAnnouncementVolume] = useState<number>(3);
+  const [preSounds, setPreSounds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -23,7 +28,7 @@ export default function SettingsScreen() {
     try {
       const { data, error } = await supabase
         .from('schools')
-        .select('name, campus_name, address, logo_url')
+        .select('name, campus_name, address, logo_url, pre_announcement_enabled, default_pre_announcement_id, pre_announcement_delay_seconds, pre_announcement_volume')
         .eq('id', schoolId)
         .single();
       
@@ -34,6 +39,21 @@ export default function SettingsScreen() {
         setCampusName(data.campus_name || '');
         setAddress(data.address || '');
         setLogoUrl(data.logo_url);
+        setPreAnnouncementEnabled(data.pre_announcement_enabled ?? true);
+        setDefaultPreAnnouncementId(data.default_pre_announcement_id || null);
+        setPreAnnouncementDelaySeconds(data.pre_announcement_delay_seconds || 3);
+        setPreAnnouncementVolume(data.pre_announcement_volume || 3);
+      }
+
+      // Fetch active pre-announcement sounds
+      const { data: soundsData } = await supabase
+        .from('pre_announcement_sounds')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
+
+      if (soundsData) {
+        setPreSounds(soundsData);
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -57,6 +77,10 @@ export default function SettingsScreen() {
           campus_name: campusName,
           address,
           logo_url: logoUrl,
+          pre_announcement_enabled: preAnnouncementEnabled,
+          default_pre_announcement_id: defaultPreAnnouncementId,
+          pre_announcement_delay_seconds: preAnnouncementDelaySeconds,
+          pre_announcement_volume: preAnnouncementVolume,
           updated_at: new Date().toISOString(),
         })
         .eq('id', schoolId);
@@ -226,6 +250,78 @@ export default function SettingsScreen() {
             </>
           )}
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Pre-Announcement Audio & Delay</Text>
+        
+        <View style={styles.rowItem}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.itemTitle}>Enable Pre-Announcement Chimes</Text>
+            <Text style={styles.itemSubtitle}>Play chime jingle before bells & announcements</Text>
+          </View>
+          <Switch
+            value={preAnnouncementEnabled}
+            onValueChange={setPreAnnouncementEnabled}
+            trackColor={{ false: '#D1D5DB', true: '#2563EB' }}
+          />
+        </View>
+
+        {preAnnouncementEnabled && (
+          <View style={{ marginTop: 12, paddingHorizontal: 16, paddingBottom: 16 }}>
+            <Text style={styles.subLabel}>Default Pre-Announcement Chime</Text>
+            {preSounds.length === 0 ? (
+              <Text style={styles.emptyText}>No sounds available from Super Admin library.</Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
+                {preSounds.map((snd) => {
+                  const isSelected = defaultPreAnnouncementId === snd.id;
+                  return (
+                    <TouchableOpacity
+                      key={snd.id}
+                      style={[styles.soundCard, isSelected && styles.soundCardSelected]}
+                      onPress={() => setDefaultPreAnnouncementId(snd.id)}
+                    >
+                      <Music size={16} color={isSelected ? '#2563EB' : '#6B7280'} />
+                      <Text style={[styles.soundCardTitle, isSelected && styles.soundCardTitleSelected]}>{snd.title}</Text>
+                      {isSelected && <Check size={14} color="#2563EB" />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            <Text style={[styles.subLabel, { marginTop: 12 }]}>Delay Duration (2 to 5 Seconds)</Text>
+            <View style={styles.delayContainer}>
+              {[2, 3, 4, 5].map((sec) => (
+                <TouchableOpacity
+                  key={sec}
+                  style={[styles.delayBtn, preAnnouncementDelaySeconds === sec && styles.delayBtnSelected]}
+                  onPress={() => setPreAnnouncementDelaySeconds(sec)}
+                >
+                  <Text style={[styles.delayBtnText, preAnnouncementDelaySeconds === sec && styles.delayBtnTextSelected]}>
+                    {sec}s
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[styles.subLabel, { marginTop: 12 }]}>Pre-Announcement Volume Level (1 to 5)</Text>
+            <View style={styles.delayContainer}>
+              {[1, 2, 3, 4, 5].map((lvl) => (
+                <TouchableOpacity
+                  key={lvl}
+                  style={[styles.delayBtn, preAnnouncementVolume === lvl && styles.delayBtnSelected]}
+                  onPress={() => setPreAnnouncementVolume(lvl)}
+                >
+                  <Text style={[styles.delayBtnText, preAnnouncementVolume === lvl && styles.delayBtnTextSelected]}>
+                    L{lvl}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
       </View>
 
       <View style={styles.section}>
@@ -435,5 +531,84 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#EF4444',
+  },
+  rowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+  },
+  itemTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  itemSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  subLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  emptyText: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+    marginVertical: 4,
+  },
+  soundCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+    marginRight: 8,
+    gap: 6,
+  },
+  soundCardSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  soundCardTitle: {
+    fontSize: 13,
+    color: '#4B5563',
+  },
+  soundCardTitleSelected: {
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  delayContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  delayBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  delayBtnSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#2563EB',
+  },
+  delayBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  delayBtnTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 });

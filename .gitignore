@@ -38,3 +38,33 @@ yarn-error.log*
 *.elf
 *.hex
 *.bin
+
+# Sensitive keys and credentials
+firebase-key.json
+*.key.json
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Supabase Temp
+supabase/.temp/
+
+# Agent and Scratch
+.agents/
+scratch/
+
+# Temporary logs and test files
+*_output.txt
+test_tts.mp3
+*.orig.bak
+*.bak
+*copy*
+* copy.*
+diff.txt
+old_main.cpp.txt
+WhatsApp Image*
+
+
+

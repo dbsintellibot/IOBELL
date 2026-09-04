@@ -16,8 +16,8 @@ export default function App() {
       return false;
     };
 
-    BackHandler.addEventListener('hardwareBackPress', handleBackPress);
-    return () => BackHandler.removeEventListener('hardwareBackPress', handleBackPress);
+    const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    return () => subscription.remove();
   }, [canGoBack]);
 
   return (

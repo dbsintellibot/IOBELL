@@ -56,6 +56,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
 
     const theme = getTheme(effectiveName)
+    const cssVars: Record<string, string> = { ...theme.cssVars }
+
+    if (effectiveName === 'slate' && effectiveMode === 'dark') {
+      cssVars['--primary'] = '210 40% 98%'
+      cssVars['--primary-foreground'] = '222.2 47.4% 11.2%'
+      cssVars['--ring'] = '212.7 26.8% 83.9%'
+    }
 
     root.classList.remove('dark', 'grey')
     if (effectiveMode === 'dark') {
@@ -64,7 +71,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       root.classList.add('grey')
     }
 
-    Object.entries(theme.cssVars).forEach(([key, value]) => {
+    Object.entries(cssVars).forEach(([key, value]) => {
       root.style.setProperty(key, value)
     })
   }, [schoolId, data?.theme_color, data?.theme_mode])

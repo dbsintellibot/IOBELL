@@ -1,9 +1,9 @@
 -- Fix auth.sessions id default value (Critical for login)
-ALTER TABLE auth.sessions ALTER COLUMN id SET DEFAULT gen_random_uuid();
+-- ALTER TABLE auth.sessions ALTER COLUMN id SET DEFAULT gen_random_uuid();
 
 -- Fix auth.refresh_tokens user_id data type mismatch (varchar -> uuid)
 -- We need to handle potential casting errors if bad data exists, but assuming valid UUID strings
-ALTER TABLE auth.refresh_tokens ALTER COLUMN user_id TYPE uuid USING user_id::uuid;
+-- ALTER TABLE auth.refresh_tokens ALTER COLUMN user_id TYPE uuid USING user_id::uuid;
 
 -- Verify/Add FK for refresh_tokens -> users if missing (Optional but good practice)
 -- DO $$

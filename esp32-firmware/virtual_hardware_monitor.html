@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoBell ESP32-S3 Virtual Hardware Monitor</title>
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --accent-blue: #38bdf8;
+      --accent-green: #22c55e;
+      --accent-red: #ef4444;
+      --accent-yellow: #eab308;
+      --lcd-bg: #8ba932;
+      --lcd-text: #172402;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    body {
+      background: var(--bg-dark);
+      color: #f8fafc;
+      min-height: 100vh;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 24px;
+      max-width: 900px;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+
+    header p {
+      color: #94a3b8;
+      font-size: 0.95rem;
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+      width: 100%;
+      max-width: 1200px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 10px;
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent-blue);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    /* LCD Screen Display */
+    .lcd-screen {
+      background: var(--lcd-bg);
+      color: var(--lcd-text);
+      font-family: 'Courier New', Courier, monospace;
+      padding: 16px;
+      border-radius: 8px;
+      border: 4px solid #334155;
+      box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.3);
+      letter-spacing: 2px;
+      font-weight: bold;
+      line-height: 1.4;
+      user-select: none;
+    }
+
+    .lcd-line {
+      height: 24px;
+      white-space: pre;
+      overflow: hidden;
+    }
+
+    /* LEDs */
+    .led-container {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 10px 0;
+    }
+
+    .led-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .led-bulb {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #334155;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      transition: all 0.3s ease;
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+    }
+
+    .led-power.active {
+      background: #ef4444;
+      box-shadow: 0 0 20px #ef4444, inset 0 -2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .led-wifi.active {
+      background: #22c55e;
+      box-shadow: 0 0 20px #22c55e, inset 0 -2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .led-label {
+      font-size: 0.85rem;
+      color: #cbd5e1;
+    }
+
+    /* Pin List */
+    .pin-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      font-size: 0.85rem;
+    }
+
+    .pin-item {
+      background: rgba(15, 23, 42, 0.6);
+      padding: 8px 12px;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .pin-status {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #64748b;
+    }
+
+    .pin-status.high {
+      background: var(--accent-blue);
+      box-shadow: 0 0 8px var(--accent-blue);
+    }
+
+    /* RTC Display */
+    .rtc-display {
+      font-size: 1.5rem;
+      font-weight: bold;
+      text-align: center;
+      color: var(--accent-blue);
+      font-family: 'Courier New', monospace;
+      letter-spacing: 2px;
+      background: rgba(15, 23, 42, 0.8);
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    /* Canvas Audio Visualizer */
+    canvas {
+      width: 100%;
+      height: 80px;
+      background: rgba(15, 23, 42, 0.8);
+      border-radius: 8px;
+    }
+
+    /* Buttons & Inputs */
+    .btn {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .controls-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    input[type="text"] {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--card-border);
+      color: white;
+      padding: 8px 12px;
+      border-radius: 8px;
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>⚡ ESP32-S3 Virtual Hardware Visualizer</h1>
+    <p>Real-time visual monitoring dashboard for 16x2 LCD, PCM5102A Audio, DS3231 RTC, Buzzer, and LEDs</p>
+  </header>
+
+  <div class="dashboard-grid">
+
+    <!-- 16x2 Character LCD -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🖥️ 16x2 LCD Display</span>
+        <span class="badge">I2C (0x27) • GPIO 8/9</span>
+      </div>
+      <div class="lcd-screen">
+        <div class="lcd-line" id="lcd-line1">AutoBell S3 v1.0</div>
+        <div class="lcd-line" id="lcd-line2">System Ready...</div>
+      </div>
+      <div class="controls-group">
+        <input type="text" id="lcd-input" placeholder="Type text for Line 1..." value="AutoBell Online">
+        <button class="btn" onclick="updateLCD()">Send to LCD</button>
+      </div>
+    </div>
+
+    <!-- Power & WiFi Status LEDs -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">💡 System LEDs & Buzzer</span>
+        <span class="badge">GPIO 13 / 2 / 15</span>
+      </div>
+      <div class="led-container">
+        <div class="led-item">
+          <div class="led-bulb led-power active" id="led-power"></div>
+          <span class="led-label">Power (GPIO 13)</span>
+        </div>
+        <div class="led-item">
+          <div class="led-bulb led-wifi active" id="led-wifi"></div>
+          <span class="led-label">WiFi (GPIO 2)</span>
+        </div>
+      </div>
+      <div class="controls-group">
+        <button class="btn btn-secondary" onclick="toggleLED('power')">Toggle Power LED</button>
+        <button class="btn btn-secondary" onclick="toggleLED('wifi')">Toggle WiFi LED</button>
+        <button class="btn" onclick="playBuzzerSound()">Beep Buzzer</button>
+      </div>
+    </div>
+
+    <!-- DS3231 Real-Time Clock -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🕒 DS3231 RTC Module</span>
+        <span class="badge">I2C (0x68) • GPIO 8/9</span>
+      </div>
+      <div class="rtc-display" id="rtc-clock">00:00:00 AM</div>
+      <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:#94a3b8;">
+        <span>Date: <strong id="rtc-date" style="color:#e2e8f0;">2026-08-07</strong></span>
+        <span>Temp: <strong id="rtc-temp" style="color:#e2e8f0;">24.5 °C</strong></span>
+        <span>Battery: <strong style="color:#22c55e;">OK (3.2V)</strong></span>
+      </div>
+      <button class="btn btn-secondary" onclick="syncRTCTime()">Sync Virtual RTC Time</button>
+    </div>
+
+    <!-- PCM5102A I2S DAC Audio + Speaker -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🔊 PCM5102A I2S Audio & Speaker</span>
+        <span class="badge">BCLK:38 LRC:4 DOUT:14</span>
+      </div>
+      <canvas id="audio-wave"></canvas>
+      <div class="controls-group">
+        <button class="btn" onclick="playTestAudioTone()">Play Test Audio Tone</button>
+        <button class="btn btn-secondary" onclick="stopAudioTone()">Stop Audio</button>
+      </div>
+    </div>
+
+    <!-- GPIO Pin Status Table -->
+    <div class="card" style="grid-column: 1 / -1;">
+      <div class="card-header">
+        <span class="card-title">🔌 ESP32-S3 GPIO Pin Status Register</span>
+        <span class="badge">Board: ESP32-S3 DevKitC-1</span>
+      </div>
+      <div class="pin-grid">
+        <div class="pin-item"><span>GPIO 13 (Power LED)</span><div class="pin-status high" id="pin-13"></div></div>
+        <div class="pin-item"><span>GPIO 2 (WiFi LED)</span><div class="pin-status high" id="pin-2"></div></div>
+        <div class="pin-item"><span>GPIO 15 (Buzzer)</span><div class="pin-status" id="pin-15"></div></div>
+        <div class="pin-item"><span>GPIO 8 (I2C SDA)</span><div class="pin-status high" id="pin-8"></div></div>
+        <div class="pin-item"><span>GPIO 9 (I2C SCL)</span><div class="pin-status high" id="pin-9"></div></div>
+        <div class="pin-item"><span>GPIO 14 (I2S DOUT)</span><div class="pin-status high" id="pin-14"></div></div>
+        <div class="pin-item"><span>GPIO 38 (I2S BCLK)</span><div class="pin-status high" id="pin-38"></div></div>
+        <div class="pin-item"><span>GPIO 4 (I2S LRC)</span><div class="pin-status high" id="pin-4"></div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // RTC Clock Loop
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('rtc-clock').textContent = now.toLocaleTimeString();
+      document.getElementById('rtc-date').textContent = now.toISOString().split('T')[0];
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function syncRTCTime() {
+      updateClock();
+      alert('Virtual RTC DS3231 synchronized with local system clock!');
+    }
+
+    // LCD Controller
+    function updateLCD() {
+      const val = document.getElementById('lcd-input').value;
+      document.getElementById('lcd-line1').textContent = val.padEnd(16, ' ').substring(0, 16);
+      document.getElementById('lcd-line2').textContent = 'Status: ACTIVE '.padEnd(16, ' ').substring(0, 16);
+    }
+
+    // LED Controllers
+    function toggleLED(type) {
+      if (type === 'power') {
+        const el = document.getElementById('led-power');
+        const pin = document.getElementById('pin-13');
+        el.classList.toggle('active');
+        pin.classList.toggle('high');
+      } else if (type === 'wifi') {
+        const el = document.getElementById('led-wifi');
+        const pin = document.getElementById('pin-2');
+        el.classList.toggle('active');
+        pin.classList.toggle('high');
+      }
+    }
+
+    // Web Audio Synthesizer for Buzzer and I2S Test Tone
+    let audioCtx;
+    let osc;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+    }
+
+    function playBuzzerSound() {
+      initAudio();
+      const buzzerPin = document.getElementById('pin-15');
+      buzzerPin.classList.add('high');
+
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(2700, audioCtx.currentTime); // 2.7kHz Buzzer tone
+      g.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      o.connect(g);
+      g.connect(audioCtx.destination);
+      o.start();
+      setTimeout(() => {
+        o.stop();
+        buzzerPin.classList.remove('high');
+      }, 200);
+    }
+
+    let isAudioPlaying = false;
+    let animationId;
+
+    function playTestAudioTone() {
+      initAudio();
+      stopAudioTone();
+      osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, audioCtx.currentTime); // 440 Hz Audio Tone
+      gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      isAudioPlaying = true;
+      drawWaveform();
+    }
+
+    function stopAudioTone() {
+      if (osc) {
+        osc.stop();
+        osc = null;
+      }
+      isAudioPlaying = false;
+      cancelAnimationFrame(animationId);
+      clearCanvas();
+    }
+
+    // Waveform Canvas Visualizer
+    const canvas = document.getElementById('audio-wave');
+    const ctx = canvas.getContext('2d');
+
+    function clearCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawWaveform() {
+      if (!isAudioPlaying) return;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#38bdf8';
+      ctx.beginPath();
+
+      const time = Date.now() / 100;
+      const width = canvas.width;
+      const height = canvas.height;
+
+      for (let x = 0; x < width; x++) {
+        const y = height / 2 + Math.sin(x * 0.05 + time) * 20;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      animationId = requestAnimationFrame(drawWaveform);
+    }
+  </script>
+</body>
+</html>

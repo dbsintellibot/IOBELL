@@ -13,6 +13,7 @@ type DeviceRecord = {
   location_area?: string | null;
   location_city?: string | null;
   location_country?: string | null;
+  location_continent?: string | null;
 };
 
 export default function DeviceListScreen() {
@@ -84,13 +85,12 @@ export default function DeviceListScreen() {
     try {
       const { error } = await supabase.from('command_queue').insert({
         device_id: deviceId,
-        school_id: schoolId,
         command,
         payload
       });
 
       if (error) throw error;
-      Alert.alert('Success', `Command ${command} sent successfully`);
+      Alert.alert('Queued', `Command ${command} sent to queue (In Queue - waiting for device execution)`);
     } catch (error) {
       console.error('Command error:', error);
       Alert.alert('Error', 'Failed to send command');
@@ -128,9 +128,15 @@ export default function DeviceListScreen() {
             </Text>
             <Text style={styles.locationText}>
               Location:{' '}
-              {item.location_area || item.location_city || item.location_country
-                ? [item.location_area, item.location_city, item.location_country].filter(Boolean).join(', ')
-                : 'Unknown'}
+              {(() => {
+                const parts = [
+                  item.location_area,
+                  item.location_city,
+                  item.location_country,
+                  item.location_continent
+                ].filter(val => val && val.trim().toLowerCase() !== 'null' && val.trim().toLowerCase() !== 'undefined');
+                return parts.length > 0 ? parts.join(', ') : 'Unknown';
+              })()}
             </Text>
           </View>
           <View style={[styles.statusBadge, item.status === 'online' ? styles.statusOnline : styles.statusOffline]}>
@@ -146,6 +152,20 @@ export default function DeviceListScreen() {
         </View>
 
         <View style={styles.actionRow}>
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() =>
+              confirmAndSendCommand(
+                'RING',
+                `Continue to trigger a 5s bell ring on "${item.name}" immediately?`,
+                { duration: 5 }
+              )
+            }
+          >
+            <PlayCircle size={16} color="#D97706" />
+            <Text style={[styles.actionButtonText, { color: '#D97706', fontWeight: '600' }]}>Ring</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity 
             style={styles.actionButton}
             onPress={() =>

@@ -3,7 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, Alert, StyleSheet, Modal, Scrol
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Clock, Music, X, Trash2, Type } from 'lucide-react-native';
+import { Plus, Clock, Music, X, Trash2, Type, Copy } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
 import TimeFormat from '../utils/timeFormat';
@@ -23,6 +23,7 @@ type ScheduleItem = {
   day_of_week: number;
   play_type: 'mp3' | 'tts';
   tts_message: string | null;
+  tts_gender: 'male' | 'female' | null;
 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -40,6 +41,9 @@ export default function ProfileEditorScreen() {
   const [selectedDay, setSelectedDay] = useState(new Date().getDay());
   const [isDirty, setIsDirty] = useState(false);
 
+  const [copyModalVisible, setCopyModalVisible] = useState(false);
+  const [selectedTargetDays, setSelectedTargetDays] = useState<number[]>([]);
+
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<ScheduleItem | null>(null);
@@ -51,6 +55,7 @@ export default function ProfileEditorScreen() {
   const [tempPlayType, setTempPlayType] = useState<'mp3' | 'tts'>('mp3');
   const [tempTtsMessage, setTempTtsMessage] = useState<string>('');
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [tempTtsGender, setTempTtsGender] = useState<'male' | 'female' | null>(null);
 
   const fetchData = React.useCallback(async () => {
     setLoading(true);
@@ -66,7 +71,7 @@ export default function ProfileEditorScreen() {
       // Fetch Schedule
       const { data: scheduleData } = await supabase
         .from('bell_times')
-        .select('id, bell_time, day_of_week, audio_file_id, audio_file_id_2, delay_seconds, play_type, tts_message')
+        .select('id, bell_time, day_of_week, audio_file_id, audio_file_id_2, delay_seconds, play_type, tts_message, tts_gender')
         .eq('profile_id', profileId);
 
       const items: ScheduleItem[] = [];
@@ -82,7 +87,8 @@ export default function ProfileEditorScreen() {
                 // DB (7=Sun) -> UI (0=Sun)
                 day_of_week: day === 7 ? 0 : day,
                 play_type: row.play_type || 'mp3',
-                tts_message: row.tts_message
+                tts_message: row.tts_message,
+                tts_gender: row.tts_gender || null
             });
         });
       });
@@ -124,7 +130,8 @@ export default function ProfileEditorScreen() {
         day_of_week: [item.day_of_week === 0 ? 7 : item.day_of_week],
         profile_id: profileId,
         play_type: item.play_type,
-        tts_message: item.tts_message
+        tts_message: item.tts_message,
+        tts_gender: item.tts_gender
       }));
 
       if (itemsToInsert.length > 0) {
@@ -145,7 +152,6 @@ export default function ProfileEditorScreen() {
         if (devices && devices.length > 0) {
           const commands = devices.map(d => ({
             device_id: d.id,
-            school_id: schoolId,
             command: 'CONFIG',
             payload: { source: 'profile_save' }
           }));
@@ -175,6 +181,7 @@ export default function ProfileEditorScreen() {
     setTempDays([selectedDay]);
     setTempPlayType('mp3');
     setTempTtsMessage('');
+    setTempTtsGender(null);
     setModalVisible(true);
   };
 
@@ -188,6 +195,7 @@ export default function ProfileEditorScreen() {
     setTempDays([item.day_of_week]);
     setTempPlayType(item.play_type);
     setTempTtsMessage(item.tts_message || '');
+    setTempTtsGender(item.tts_gender || null);
     setModalVisible(true);
   };
 
@@ -212,7 +220,8 @@ export default function ProfileEditorScreen() {
           delay_seconds: tempDelay,
           day_of_week: day,
           play_type: tempPlayType,
-          tts_message: tempPlayType === 'tts' && !tempAudioId ? tempTtsMessage : null
+          tts_message: tempPlayType === 'tts' && !tempAudioId ? tempTtsMessage : null,
+          tts_gender: tempPlayType === 'tts' && !tempAudioId ? tempTtsGender : null
         });
       });
       
@@ -228,7 +237,8 @@ export default function ProfileEditorScreen() {
           delay_seconds: tempDelay,
           day_of_week: day,
           play_type: tempPlayType,
-          tts_message: tempPlayType === 'tts' && !tempAudioId ? tempTtsMessage : null
+          tts_message: tempPlayType === 'tts' && !tempAudioId ? tempTtsMessage : null,
+          tts_gender: tempPlayType === 'tts' && !tempAudioId ? tempTtsGender : null
         });
       });
       setSchedule(newItems);
@@ -241,6 +251,33 @@ export default function ProfileEditorScreen() {
   const handleDeleteItem = (id: string) => {
     setSchedule(prev => prev.filter(i => i.id !== id));
     setIsDirty(true);
+  };
+
+  const handleCopyScheduleConfirm = () => {
+    if (selectedTargetDays.length === 0) return;
+
+    // Filter out existing target days' schedules
+    const nextSchedule = schedule.filter(item => !selectedTargetDays.includes(item.day_of_week));
+
+    // Get current day's schedules
+    const sourceItems = schedule.filter(item => item.day_of_week === selectedDay);
+
+    // Duplicate current day's schedules to target days
+    const clonedItems = selectedTargetDays.flatMap(targetDay =>
+      sourceItems.map(item => ({
+        ...item,
+        id: `copy-${item.id}-${targetDay}-${Math.random().toString(36).substr(2, 9)}`,
+        day_of_week: targetDay
+      }))
+    );
+
+    setSchedule([...nextSchedule, ...clonedItems]);
+    setIsDirty(true);
+    setCopyModalVisible(false);
+    Alert.alert(
+      'Success',
+      `Schedule copied to selected target days. Tap 'Save' at the top-right to save your changes.`
+    );
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -340,6 +377,23 @@ export default function ProfileEditorScreen() {
         </ScrollView>
       </View>
 
+      {/* Copy Button Row */}
+      <View style={styles.timelineHeaderRow}>
+        <Text style={styles.timelineHeaderText}>
+          {DAYS[selectedDay]}'s Schedule
+        </Text>
+        <TouchableOpacity
+          style={styles.copyTextButton}
+          onPress={() => {
+            setSelectedTargetDays([]);
+            setCopyModalVisible(true);
+          }}
+        >
+          <Copy size={14} color="#2563EB" />
+          <Text style={styles.copyTextButtonText}>Copy to Days</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Schedule List */}
       {loading ? (
         <View style={styles.centerContainer}>
@@ -366,6 +420,81 @@ export default function ProfileEditorScreen() {
       >
         <Plus color="#fff" size={24} />
       </TouchableOpacity>
+
+      {/* Copy Schedule Modal */}
+      <Modal
+        visible={copyModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setCopyModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Copy Schedule</Text>
+              <TouchableOpacity onPress={() => setCopyModalVisible(false)}>
+                <X size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ paddingBottom: 16 }}>
+              <Text style={styles.copyInstructionText}>
+                Copy the schedule from {DAYS[selectedDay]} to target days:
+              </Text>
+
+              <View style={styles.daysGridContainer}>
+                {DAYS.map((day, index) => {
+                  const isSource = index === selectedDay;
+                  const isSelected = selectedTargetDays.includes(index);
+                  return (
+                    <TouchableOpacity
+                      key={day}
+                      disabled={isSource}
+                      style={[
+                        styles.copyDayButton,
+                        isSource && styles.copyDayButtonDisabled,
+                        isSelected && styles.copyDayButtonSelected
+                      ]}
+                      onPress={() => {
+                        setSelectedTargetDays(prev =>
+                          prev.includes(index)
+                            ? prev.filter(d => d !== index)
+                            : [...prev, index].sort()
+                        );
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.copyDayButtonText,
+                          isSource && styles.copyDayButtonTextDisabled,
+                          isSelected && styles.copyDayButtonTextSelected
+                        ]}
+                      >
+                        {day}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.warningText}>
+                ⚠️ Note: This will replace the schedules on the selected target days.
+              </Text>
+
+              <TouchableOpacity
+                style={[
+                  styles.saveButton,
+                  selectedTargetDays.length === 0 && { backgroundColor: '#9CA3AF' }
+                ]}
+                disabled={selectedTargetDays.length === 0}
+                onPress={handleCopyScheduleConfirm}
+              >
+                <Text style={styles.saveButtonText}>Copy & Apply</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Add/Edit Modal */}
       <Modal
@@ -562,6 +691,22 @@ export default function ProfileEditorScreen() {
                             textAlignVertical="top"
                         />
                     </View>
+
+                    {!tempAudioId && (
+                        <View style={styles.formGroup}>
+                            <Text style={styles.label}>Voice Gender</Text>
+                            <View style={styles.pickerContainer}>
+                                <Picker
+                                    selectedValue={tempTtsGender}
+                                    onValueChange={(val) => setTempTtsGender(val)}
+                                >
+                                    <Picker.Item label="School Default" value={null} />
+                                    <Picker.Item label="Female Voice" value="female" />
+                                    <Picker.Item label="Male Voice" value="male" />
+                                </Picker>
+                            </View>
+                        </View>
+                    )}
                   </>
               )}
 
@@ -855,5 +1000,82 @@ const styles = StyleSheet.create({
   disabledInput: {
     backgroundColor: '#F3F4F6',
     color: '#9CA3AF',
+  },
+  timelineHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  timelineHeaderText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  copyTextButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  copyTextButtonText: {
+    fontSize: 13,
+    color: '#2563EB',
+    fontWeight: '500',
+  },
+  copyInstructionText: {
+    fontSize: 14,
+    color: '#4B5563',
+    marginBottom: 16,
+  },
+  daysGridContainer: {
+    flexDirection: 'column',
+    gap: 8,
+    marginBottom: 16,
+  },
+  copyDayButton: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+  },
+  copyDayButtonSelected: {
+    backgroundColor: '#EBF5FF',
+    borderColor: '#3B82F6',
+  },
+  copyDayButtonDisabled: {
+    backgroundColor: '#F3F4F6',
+    borderColor: '#E5E7EB',
+    opacity: 0.5,
+  },
+  copyDayButtonText: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+  },
+  copyDayButtonTextSelected: {
+    color: '#1D4ED8',
+    fontWeight: '600',
+  },
+  copyDayButtonTextDisabled: {
+    color: '#9CA3AF',
+  },
+  warningText: {
+    fontSize: 12,
+    color: '#B45309',
+    backgroundColor: '#FEF3C7',
+    padding: 10,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 16,
   },
 });

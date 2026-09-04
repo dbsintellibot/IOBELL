@@ -15,6 +15,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isMounted = useRef(true)
   const queryClient = useQueryClient()
 
+  const [impersonatedSchoolId, setImpersonatedSchoolId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('impersonatedSchoolId')
+    }
+    return null
+  })
+
+  const [dbPartnerId, setDbPartnerId] = useState<string | null>(null)
+  const [impersonatedPartnerId, setImpersonatedPartnerId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('impersonatedPartnerId')
+    }
+    return null
+  })
+
+
+
   useEffect(() => {
     isMounted.current = true
     return () => {
@@ -69,10 +86,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setOtaEnabled(!!data.ota_enabled)
         
         const roleValue = data.role
-        if (roleValue === 'super_admin' || roleValue === 'admin' || roleValue === 'operator') {
+        if (roleValue === 'super_admin' || roleValue === 'admin' || roleValue === 'operator' || roleValue === 'partner') {
           setRole(prev => prev !== roleValue ? roleValue : prev)
+          if (roleValue === 'partner') {
+            const { data: partnerData } = await supabase
+              .from('partners')
+              .select('id')
+              .eq('user_id', userId)
+              .maybeSingle()
+            if (partnerData) {
+              setDbPartnerId(partnerData.id)
+            } else {
+              setDbPartnerId(null)
+            }
+          } else {
+            setDbPartnerId(null)
+          }
         } else {
           setRole(null)
+          setDbPartnerId(null)
         }
       }
     } catch (error) {
@@ -80,6 +112,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Unexpected error fetching user details:', error)
     }
   }, [])
+
+  const impersonateSchool = useCallback((targetSchoolId: string) => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('impersonatedSchoolId', targetSchoolId)
+    }
+    setImpersonatedSchoolId(targetSchoolId)
+  }, [])
+
+  const impersonatePartner = useCallback((targetPartnerId: string, _targetUserId: string) => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('impersonatedPartnerId', targetPartnerId)
+    }
+    setImpersonatedPartnerId(targetPartnerId)
+  }, [])
+
+  const stopImpersonation = useCallback(async () => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('impersonatedSchoolId')
+      sessionStorage.removeItem('impersonatedPartnerId')
+    }
+    setImpersonatedSchoolId(null)
+    setImpersonatedPartnerId(null)
+    if (user) {
+      await fetchUserDetails(user.id)
+    }
+  }, [user, fetchUserDetails])
 
   useEffect(() => {
     let mounted = true
@@ -143,12 +201,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(() => ({
     session,
     user,
-    schoolId,
-    role,
+    schoolId: impersonatedSchoolId ?? schoolId,
+    role: impersonatedSchoolId ? 'admin' : (impersonatedPartnerId ? 'partner' : role),
+    partnerId: impersonatedPartnerId ?? dbPartnerId,
     ttsEnabled,
     otaEnabled,
     loading,
     signOut: async () => {
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('impersonatedSchoolId')
+        sessionStorage.removeItem('impersonatedPartnerId')
+      }
       await supabase.auth.signOut()
       setSession(null)
       setUser(null)
@@ -156,9 +219,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole(null)
       setTtsEnabled(false)
       setOtaEnabled(false)
+      setImpersonatedSchoolId(null)
+      setImpersonatedPartnerId(null)
+      setDbPartnerId(null)
       queryClient.clear()
-    }
-  }), [session, user, schoolId, role, ttsEnabled, otaEnabled, loading, queryClient])
+    },
+    impersonatedSchoolId,
+    impersonatedPartnerId,
+    isImpersonating: !!impersonatedSchoolId || !!impersonatedPartnerId,
+    impersonateSchool,
+    impersonatePartner,
+    stopImpersonation
+  }), [
+    session,
+    user,
+    schoolId,
+    role,
+    dbPartnerId,
+    impersonatedPartnerId,
+    ttsEnabled,
+    otaEnabled,
+    loading,
+    impersonatedSchoolId,
+    impersonateSchool,
+    impersonatePartner,
+    stopImpersonation,
+    queryClient
+  ])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

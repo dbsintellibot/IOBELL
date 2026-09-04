@@ -15,11 +15,13 @@ export async function generateSecureTTS(
     throw new Error(error.message || 'Failed to generate speech via secure endpoint')
   }
 
-  if (!(data instanceof Blob)) {
-     throw new Error('Invalid response from secure endpoint')
+  if (data instanceof Blob) {
+    return data;
+  } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+    return new Blob([data as BlobPart], { type: 'audio/mpeg' });
   }
-  
-  return data;
+
+  throw new Error('Invalid response from secure endpoint');
 }
 
 export async function generateTTS(

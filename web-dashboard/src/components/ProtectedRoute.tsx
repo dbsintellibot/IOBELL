@@ -2,7 +2,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Navigate, Outlet } from 'react-router-dom'
 
 interface ProtectedRouteProps {
-  requiredRole?: 'super_admin' | 'admin' | 'operator'
+  requiredRole?: 'super_admin' | 'admin' | 'operator' | 'partner'
 }
 
 export function ProtectedRoute({ requiredRole }: ProtectedRouteProps) {
@@ -17,17 +17,21 @@ export function ProtectedRoute({ requiredRole }: ProtectedRouteProps) {
   }
 
   if (requiredRole && role !== requiredRole) {
-    // If user is logged in but doesn't have the required role
-    // For super_admin routes, redirect to dashboard if they are admin/operator
-    // For dashboard routes, if they are super_admin, maybe redirect to super-admin dashboard
     if (role === 'super_admin') {
       return <Navigate to="/super-admin" replace />
+    }
+    if (role === 'partner') {
+      return <Navigate to="/partner" replace />
     }
     return <Navigate to="/dashboard" replace />
   }
 
   if (!requiredRole && role === 'super_admin') {
     return <Navigate to="/super-admin" replace />
+  }
+
+  if (!requiredRole && role === 'partner') {
+    return <Navigate to="/partner" replace />
   }
 
   return <Outlet />
