@@ -1,5 +1,8 @@
 {
+  "name": "autobell-monorepo",
+  "private": true,
   "scripts": {
+    "build": "npm --prefix web-dashboard run build",
     "deploy:all": "node deploy-agent.mjs"
   },
   "dependencies": {
