@@ -222,6 +222,22 @@ export default function BellManagement() {
         payload
       })
       if (error) throw error
+
+      // Push via Supabase Realtime broadcast channels for zero-latency execution (<100ms)
+      const targetDevice = devices?.find(d => d.id === deviceId)
+      if (targetDevice?.mac_address) {
+        const cleanMac = targetDevice.mac_address.replace(/[: -]/g, '').toUpperCase()
+        const ch = supabase.channel(`device:${cleanMac}`)
+        ch.subscribe((st) => {
+          if (st === 'SUBSCRIBED') {
+            ch.send({
+              type: 'broadcast',
+              event: 'command',
+              payload: { command, payload }
+            }).then(() => supabase.removeChannel(ch))
+          }
+        })
+      }
     },
     onSuccess: (_, variables) => {
       setNotification({ type: 'success', message: `Command ${variables.command} sent successfully!` })

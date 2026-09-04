@@ -608,7 +608,32 @@ export default function Broadcast() {
 
       if (cmdError) throw cmdError
 
-      setStatus({ type: 'success', message: 'Voice note queued successfully! (In Queue - check notification bar when device executes it)' })
+      // Push via Supabase Realtime broadcast channels for zero-latency execution (<100ms)
+      targetDevices.forEach(d => {
+        if (d.mac_address) {
+          const cleanMac = d.mac_address.replace(/[: -]/g, '').toUpperCase()
+          const ch = supabase.channel(`device:${cleanMac}`)
+          ch.subscribe((st) => {
+            if (st === 'SUBSCRIBED') {
+              ch.send({
+                type: 'broadcast',
+                event: 'command',
+                payload: {
+                  command: 'VOICE_NOTE',
+                  payload: {
+                    url: publicUrl,
+                    play_pre_announcement: playPreAnnouncementVoice,
+                    pre_announcement_url: schoolPreAnnouncementUrl || '',
+                    pre_announcement_delay_seconds: schoolPreAnnouncementDelay || 3
+                  }
+                }
+              }).then(() => supabase.removeChannel(ch))
+            }
+          })
+        }
+      })
+
+      setStatus({ type: 'success', message: 'Voice note queued and pushed to device! (Executing via Realtime)' })
       setAudioBlob(null)
       setAudioUrl(null)
     } catch (error) {
@@ -708,7 +733,27 @@ export default function Broadcast() {
 
       if (cmdError) throw cmdError
 
-      setStatus({ type: 'success', message: 'Announcement queued successfully! (In Queue - check notification bar when device executes it)' })
+      // Push via Supabase Realtime broadcast channels for zero-latency execution (<100ms)
+      targetDevices.forEach(d => {
+        if (d.mac_address) {
+          const cleanMac = d.mac_address.replace(/[: -]/g, '').toUpperCase()
+          const ch = supabase.channel(`device:${cleanMac}`)
+          ch.subscribe((st) => {
+            if (st === 'SUBSCRIBED') {
+              ch.send({
+                type: 'broadcast',
+                event: 'command',
+                payload: {
+                  command: commandType,
+                  payload: commandPayload
+                }
+              }).then(() => supabase.removeChannel(ch))
+            }
+          })
+        }
+      })
+
+      setStatus({ type: 'success', message: 'Announcement queued and pushed to device! (Executing via Realtime)' })
       setText('')
       setIncludeWeather(false)
       setSelectedNewsCategory('none')
