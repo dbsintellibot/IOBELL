@@ -1,7 +1,9 @@
 {
-  "buildCommand": "npm --prefix web-dashboard run build",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "cd web-dashboard && npm install",
+  "buildCommand": "cd web-dashboard && npm run build",
   "outputDirectory": "web-dashboard/dist",
-  "framework": "vite",
   "rewrites": [
     {
       "source": "/(.*)",
