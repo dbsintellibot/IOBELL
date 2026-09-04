@@ -20,6 +20,7 @@
 #include <esp_task_wdt.h>
 #include <time.h>
 #include <vector>
+#include "RealtimeClient.h"
 
 // ==========================================
 // LCD DISPLAY CONFIGURATION
@@ -82,7 +83,8 @@ char SUPABASE_KEY[300] =
 // Settings
 const long UTC_OFFSET_SEC = 18000; // GMT+5 for Pakistan
 const unsigned long SCHEDULE_SYNC_INTERVAL = 5 * 60 * 1000;
-const unsigned long COMMAND_POLL_INTERVAL = 15 * 1000; // 15s (optimized to reduce TLS memory fragmentation & RF power surges)
+const unsigned long COMMAND_POLL_INTERVAL = 30 * 1000; // 30s offline/disconnected fallback
+const unsigned long COMMAND_POLL_PASSIVE_INTERVAL = 5 * 60 * 1000; // 5 min passive fallback when WebSocket is connected
 const unsigned long HEARTBEAT_INTERVAL = 60 * 1000;
 const unsigned long PROVISION_POLL_INTERVAL = 10 * 1000;
 const unsigned long AUDIO_CACHE_SYNC_INTERVAL = 10 * 60 * 1000;
@@ -136,6 +138,7 @@ int preAnnouncementDelaySeconds = 3;
 
 void logToDatabase(String level, String message);
 bool playLocalPreAnnouncementChime(bool forcePlay = false);
+void executeCommand(const char *cmd, JsonObject payload, String cmdId = "");
 
 static int getI2SVolumeFromSystem(int sysVol) {
   if (sysVol < 0) sysVol = 0;
@@ -815,6 +818,22 @@ void setup() {
     syncAudioCache();
   }
 
+  // Supabase Realtime WebSocket Client Setup
+  RealtimeClient::getInstance().onCommand([](const char* cmd, JsonObject& payload) {
+    Serial.printf("[Realtime] Instant command received: %s\n", cmd);
+    executeCommand(cmd, payload);
+  });
+
+  RealtimeClient::getInstance().onScheduleUpdate([]() {
+    Serial.println("[Realtime] Schedule update alert received! Syncing...");
+    syncSchedules();
+    syncAudioCache();
+  });
+
+  if (currentState == STATE_ACTIVE && WiFi.status() == WL_CONNECTED) {
+    RealtimeClient::getInstance().begin(SUPABASE_URL, SUPABASE_KEY, deviceMacAddress, schoolId);
+  }
+
   Serial.printf("I2S Pins: BCLK=%d LRC=%d DOUT=%d\n", I2S_BCLK, I2S_LRC, I2S_DOUT);
 
   // Pre-initialize Audio to avoid driver state issues later
@@ -829,6 +848,9 @@ void loop() {
   // 0. Audio Loop (Must be called frequently)
   if (audio)
     audio->loop();
+
+  // Supabase Realtime WebSocket Loop (Keepalive & ping management)
+  RealtimeClient::getInstance().loop();
 
   // Periodic LCD Update (1Hz)
   static unsigned long lastLcdUpdate = 0;
@@ -961,6 +983,9 @@ void loop() {
   } else {
     wifiDisconnectedSince = 0;
     digitalWrite(PIN_LED_STATUS, HIGH);
+    if (!RealtimeClient::getInstance().isConnected() && currentState == STATE_ACTIVE) {
+      RealtimeClient::getInstance().begin(SUPABASE_URL, SUPABASE_KEY, deviceMacAddress, schoolId);
+    }
   }
 
   // 4. State Logic
@@ -981,6 +1006,7 @@ void loop() {
         syncSchedules();
         syncAudioCache();
         lastAudioCacheSync = millis();
+        RealtimeClient::getInstance().begin(SUPABASE_URL, SUPABASE_KEY, deviceMacAddress, schoolId);
       }
     }
     return;
@@ -989,7 +1015,10 @@ void loop() {
   updateDeviceLocationOnce();
 
   // 5. Active State Tasks
-  if (millis() - lastCommandPoll >= COMMAND_POLL_INTERVAL) {
+  // Passive fallback: When Realtime WebSocket is connected, poll only once every 5 minutes (300s).
+  // If WebSocket is offline/disconnected, fallback to 30s.
+  unsigned long activePollInterval = RealtimeClient::getInstance().isConnected() ? COMMAND_POLL_PASSIVE_INTERVAL : COMMAND_POLL_INTERVAL;
+  if (millis() - lastCommandPoll >= activePollInterval) {
     lastCommandPoll = millis();
     pollCommands();
   }
@@ -1856,6 +1885,7 @@ void fetchDeviceDetails() {
         if (doc[0]["school_code"].is<String>()) {
           Serial.println("School Code: " + doc[0]["school_code"].as<String>());
         }
+        RealtimeClient::getInstance().setSchoolId(schoolId);
       } else {
         currentState = STATE_UNASSIGNED;
         Serial.println("State: UNASSIGNED (Waiting for Super Admin)");
@@ -2707,6 +2737,387 @@ void performOTAUpdate(const String &url) {
   http.end();
 }
 
+void executeCommand(const char *cmd, JsonObject payload, String cmdId) {
+  if (!cmd) return;
+  bool executed = false;
+
+  bool quietOverride = false;
+  if (!payload.isNull() && payload.containsKey("quiet_hours_override")) {
+    quietOverride = payload["quiet_hours_override"].as<bool>();
+  }
+  if (!quietOverride && isSoundCommand(cmd) && isQuietHoursNow()) {
+    Serial.println("Quiet Hours active. Ignoring sound command.");
+    if (cmdId.length() > 0) ackCommand(cmdId);
+    return;
+  }
+
+  if (streamModeActive && streamBypassOtherAudio && isSoundCommand(cmd) &&
+      strcmp(cmd, "STREAM_START") != 0) {
+    Serial.println(
+        "Stream bypass enabled. Ignoring sound command during stream.");
+    if (cmdId.length() > 0) ackCommand(cmdId);
+    return;
+  }
+
+  if (strcmp(cmd, "STREAM_START") == 0) {
+    Serial.println("Executing command: STREAM_START");
+    String url = "";
+    bool bypassOther = false;
+    bool playPreChime = preAnnouncementEnabled;
+
+    if (!payload.isNull()) {
+      if (payload.containsKey("url")) {
+        url = payload["url"].as<String>();
+      }
+      if (payload.containsKey("bypass_other_audio")) {
+        bypassOther = payload["bypass_other_audio"].as<bool>();
+      } else if (payload.containsKey("allow_other_audio")) {
+        bypassOther = !payload["allow_other_audio"].as<bool>();
+      }
+      if (payload.containsKey("play_pre_announcement")) {
+        playPreChime = payload["play_pre_announcement"].as<bool>();
+      } else if (payload.containsKey("pre_announcement_enabled")) {
+        playPreChime = payload["pre_announcement_enabled"].as<bool>();
+      }
+      if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
+        preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
+      }
+      if (payload.containsKey("pre_announcement_delay_seconds")) {
+        preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
+      }
+    }
+
+    url.trim();
+    if (url.length() > 0) {
+      streamModeActive = true;
+      streamBypassOtherAudio = bypassOther;
+      streamModeUrl = url;
+      lastStreamRestartAttemptMs = 0;
+
+      if (cmdId.length() > 0) ackCommand(cmdId); // Ack FIRST
+      executed = false;
+      if (playPreChime) {
+        playLocalPreAnnouncementChime(playPreChime);
+      }
+      startStreamPlayback(streamModeUrl);
+    } else {
+      Serial.println("Error: No URL provided for STREAM_START");
+    }
+  } else if (strcmp(cmd, "STREAM_STOP") == 0) {
+    Serial.println("Executing command: STREAM_STOP");
+    if (cmdId.length() > 0) ackCommand(cmdId); // Ack FIRST
+    executed = false;
+    streamModeActive = false;
+    streamBypassOtherAudio = false;
+    streamModeUrl = "";
+    stopStreamPlayback();
+  } else if (strcmp(cmd, "EMERGENCY_STOP") == 0) {
+    Serial.println("Executing command: EMERGENCY_STOP");
+    streamModeActive = false;
+    streamBypassOtherAudio = false;
+    streamModeUrl = "";
+    stopStreamPlayback();
+    stopBuzzer();
+    executed = true;
+  } else if (strcmp(cmd, "RING") == 0) {
+    Serial.println("Executing command: RING");
+    if (cmdId.length() > 0) {
+      ackCommand(cmdId); // Ack FIRST to release HTTPS connection and avoid SSL conflict
+      delay(50); // Yield to lwIP network stack to release TCP/TLS socket
+    }
+    executed = false;
+    playLocalPreAnnouncementChime(true); // Play selected pre-announcement chime
+    playBell("Manual Ring"); // Play actual bell chime/buzzer after pre-chime
+  } else if (strcmp(cmd, "PLAY_URL") == 0) {
+    Serial.println("Executing command: PLAY_URL");
+    String url = "";
+    bool playPreChime = preAnnouncementEnabled;
+    if (!payload.isNull()) {
+      if (payload.containsKey("url")) {
+        url = payload["url"].as<String>();
+      } else if (payload.containsKey("audio_url")) {
+        url = payload["audio_url"].as<String>();
+      }
+      if (payload.containsKey("play_pre_announcement")) {
+        playPreChime = payload["play_pre_announcement"].as<bool>();
+      } else if (payload.containsKey("pre_announcement_enabled")) {
+        playPreChime = payload["pre_announcement_enabled"].as<bool>();
+      }
+      if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
+        preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
+      }
+      if (payload.containsKey("pre_announcement_delay_seconds")) {
+        preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
+      }
+    }
+
+    if (url.length() > 0) {
+      url.trim();
+      Serial.println("Streaming URL: " + url);
+      if (cmdId.length() > 0) {
+        ackCommand(cmdId); // Ack FIRST to avoid SSL conflict
+        delay(50); // Yield to lwIP network stack to release TCP/TLS socket
+      }
+      executed = false;
+      streamingTimeoutMs = 45000;
+
+      if (playPreChime) {
+        playLocalPreAnnouncementChime(playPreChime);
+      }
+
+      // Stop any existing I2S sound
+      if (audio) {
+        if (audio->isRunning())
+          audio->stopSong();
+      }
+
+      enableAmp();
+      initAudio(); // Allocate Audio Object
+      delay(50);
+      if (!audio) {
+        Serial.println("PLAY_URL: audio object NULL - aborting");
+        return;
+      }
+      lcdPlayingType = "Streaming";
+      lcdPlayingDetail = url;
+      audio->connecttohost(url.c_str());
+      audio->setVolume(getI2SVolumeFromSystem(systemVolume));
+      playState = PLAY_STREAMING;
+      playStateStartTime = millis();
+      updateLCD();
+    } else {
+      Serial.println("Error: No URL provided in payload");
+    }
+  } else if (strcmp(cmd, "TTS") == 0) {
+    Serial.println("Executing command: TTS");
+    String text = "";
+    String url = "";
+    String lang = "en";
+    String voiceGender = "";
+    bool playPreChime = preAnnouncementEnabled;
+
+    if (!payload.isNull()) {
+      if (payload.containsKey("text")) {
+        text = payload["text"].as<String>();
+      }
+      if (payload.containsKey("language")) {
+        lang = payload["language"].as<String>();
+      }
+      if (payload.containsKey("voice_gender")) {
+        voiceGender = payload["voice_gender"].as<String>();
+      } else if (payload.containsKey("gender")) {
+        voiceGender = payload["gender"].as<String>();
+      }
+      if (payload.containsKey("play_pre_announcement")) {
+        playPreChime = payload["play_pre_announcement"].as<bool>();
+      } else if (payload.containsKey("pre_announcement_enabled")) {
+        playPreChime = payload["pre_announcement_enabled"].as<bool>();
+      }
+      if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
+        preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
+      }
+      if (payload.containsKey("pre_announcement_delay_seconds")) {
+        preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
+      }
+      if (payload.containsKey("url")) {
+        url = payload["url"].as<String>();
+      }
+    }
+
+    if (text.length() > 0) {
+      if (cmdId.length() > 0) {
+        ackCommand(cmdId); // Ack FIRST
+        delay(150); // Yield to lwIP network stack to release TCP/TLS socket
+      }
+      executed = false;
+      if (playPreChime) {
+        playLocalPreAnnouncementChime(playPreChime);
+      }
+      playTTS(text, lang, voiceGender);
+    } else if (url.length() > 0) {
+      Serial.println("TTS Command contains URL. Playing as Voice Note...");
+      if (cmdId.length() > 0) {
+        ackCommand(cmdId); // Ack FIRST
+        delay(150); // Yield to lwIP network stack to release TCP/TLS socket
+      }
+      executed = false;
+      streamingTimeoutMs = 45000;
+
+      if (playPreChime) {
+        playLocalPreAnnouncementChime(playPreChime);
+      }
+
+      if (audio && audio->isRunning())
+        audio->stopSong();
+      enableAmp();
+      initAudio();
+      if (!audio) {
+        Serial.println("TTS URL: audio object NULL - aborting");
+        return;
+      }
+      lcdPlayingType = "Voice Note";
+      lcdPlayingDetail = url;
+      audio->connecttohost(url.c_str());
+      audio->setVolume(getI2SVolumeFromSystem(systemVolume));
+      playState = PLAY_STREAMING;
+      playStateStartTime = millis(); // Reset timer for grace period
+      updateLCD();
+    } else {
+      Serial.println("Error: No text or url provided for TTS");
+    }
+  } else if (strcmp(cmd, "VOICE_NOTE") == 0) {
+    Serial.println("Executing command: VOICE_NOTE");
+    String url = "";
+    bool playPreChime = preAnnouncementEnabled;
+    if (!payload.isNull()) {
+      if (payload.containsKey("url")) {
+        url = payload["url"].as<String>();
+      }
+      if (payload.containsKey("play_pre_announcement")) {
+        playPreChime = payload["play_pre_announcement"].as<bool>();
+      } else if (payload.containsKey("pre_announcement_enabled")) {
+        playPreChime = payload["pre_announcement_enabled"].as<bool>();
+      }
+      if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
+        preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
+      }
+      if (payload.containsKey("pre_announcement_delay_seconds")) {
+        preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
+      }
+    }
+
+    if (url.length() > 0) {
+      url.trim();
+      Serial.println("Playing Voice Note: " + url);
+      if (cmdId.length() > 0) {
+        ackCommand(cmdId); // Ack FIRST
+        delay(50); // Yield to lwIP network stack to release TCP/TLS socket
+      }
+
+      streamingTimeoutMs = 45000; // 45s safety timeout for Voice Notes
+
+      if (playPreChime) {
+        playLocalPreAnnouncementChime(playPreChime);
+      }
+
+      if (audio) {
+        if (audio->isRunning())
+          audio->stopSong();
+      }
+      enableAmp();
+      initAudio();
+      delay(50);
+      if (!audio) {
+        Serial.println("VOICE_NOTE: audio object NULL - aborting");
+        return;
+      }
+      lcdPlayingType = "Voice Note";
+      lcdPlayingDetail = url;
+      audio->connecttohost(url.c_str());
+      audio->setVolume(getI2SVolumeFromSystem(systemVolume));
+      playStateStartTime = millis();
+      playState = PLAY_STREAMING;
+      updateLCD();
+    } else {
+      Serial.println("Error: No URL provided for Voice Note");
+    }
+  } else if (strcmp(cmd, "TEST_BUZZER") == 0) {
+    Serial.println("Executing command: TEST_BUZZER");
+    testBuzzer();
+    executed = true;
+  } else if (strcmp(cmd, "TEST_AUDIO") == 0) {
+    Serial.println("Executing command: TEST_AUDIO");
+    if (cmdId.length() > 0) {
+      ackCommand(cmdId);
+      delay(50);
+    }
+    executed = false;
+    playLocalPreAnnouncementChime(true);
+    playBell("Test Audio");
+  } else if (strcmp(cmd, "SYNC_TIME") == 0) {
+    Serial.println("Executing command: SYNC_TIME");
+    esp_sntp_stop();
+    esp_sntp_init();
+    Serial.println("Time Synced via Command");
+    executed = true;
+  } else if (strcmp(cmd, "CONFIG") == 0 ||
+             strcmp(cmd, "SYNC_SCHEDULES") == 0) {
+    Serial.println("Config/Sync Command Received. Refreshing details...");
+    fetchDeviceDetails();
+    syncSchedules();
+    syncAudioCache();
+    executed = true;
+  } else if (strcmp(cmd, "SET_VOLUME") == 0) {
+    Serial.println("Executing command: SET_VOLUME");
+    if (!payload.isNull() && payload.containsKey("volume")) {
+      int newVol = payload["volume"].as<int>();
+      if (newVol >= 0 && newVol <= 100) {
+        systemVolume = newVol;
+        preferences.putInt("volume", systemVolume);
+
+        if (audio) {
+          audio->setVolume(getI2SVolumeFromSystem(systemVolume));
+        }
+        Serial.printf("Volume set to %d (I2S=%d)\n", systemVolume, getI2SVolumeFromSystem(systemVolume));
+        executed = true;
+      } else {
+        Serial.println("Invalid volume range (0-100)");
+      }
+    }
+  } else if (strcmp(cmd, "REBOOT") == 0) {
+    Serial.println("Reboot Command Received. Restarting in 1s...");
+    executed = true;
+  } else if (strcmp(cmd, "UPDATE_FIRMWARE") == 0) {
+    String url = "";
+    if (!payload.isNull() && payload.containsKey("url")) {
+      url = payload["url"].as<String>();
+    }
+
+    if (url.length() > 0) {
+      Serial.println("Starting OTA Update from: " + url);
+      if (cmdId.length() > 0) {
+        WiFiClientSecure ackClient;
+        ackClient.setInsecure();
+        HTTPClient ackHttp;
+        ackHttp.begin(ackClient,
+                      String(SUPABASE_URL) + "/rest/v1/rpc/ack_command");
+        ackHttp.addHeader("apikey", SUPABASE_KEY);
+        ackHttp.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+        ackHttp.addHeader("Content-Type", "application/json");
+        ackHttp.POST("{\"p_command_id\": " + cmdId + "}");
+        ackHttp.end();
+        delay(300);
+      }
+      executed = false;
+      performOTAUpdate(url);
+    } else {
+      Serial.println("Error: No URL provided for Firmware Update");
+    }
+  }
+
+  // Ack
+  if (executed && cmdId.length() > 0) {
+    Serial.println("Command Executed. Sending Ack...");
+    WiFiClientSecure ackClient;
+    ackClient.setInsecure();
+    HTTPClient ackHttp;
+    ackHttp.begin(ackClient, String(SUPABASE_URL) + "/rest/v1/rpc/ack_command");
+    ackHttp.addHeader("apikey", SUPABASE_KEY);
+    ackHttp.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    ackHttp.addHeader("Content-Type", "application/json");
+    ackHttp.POST("{\"p_command_id\": " + cmdId + ", \"p_device_mac\": \"" + deviceMacAddress + "\"}");
+    ackHttp.end();
+
+    if (strcmp(cmd, "REBOOT") == 0) {
+      delay(1000);
+      ESP.restart();
+    }
+  } else if (executed && strcmp(cmd, "REBOOT") == 0) {
+    delay(1000);
+    ESP.restart();
+  }
+}
+
 void pollCommands() {
   // Don't interrupt playback with blocking WiFi operations
   if (playState != PLAY_IDLE) {
@@ -2862,376 +3273,8 @@ void pollCommands() {
       } else {
         Serial.println("Payload is NULL or Empty");
       }
-      // -----------------------------
-
-      // Execute
-      bool executed = false;
-
-      bool quietOverride = false;
-      if (!payload.isNull() && payload.containsKey("quiet_hours_override")) {
-        quietOverride = payload["quiet_hours_override"].as<bool>();
-      }
-      if (!quietOverride && isSoundCommand(cmd) && isQuietHoursNow()) {
-        Serial.println("Quiet Hours active. Ignoring sound command.");
-        ackCommand(cmdId);
-        return;
-      }
-
-      if (streamModeActive && streamBypassOtherAudio && isSoundCommand(cmd) &&
-          strcmp(cmd, "STREAM_START") != 0) {
-        Serial.println(
-            "Stream bypass enabled. Ignoring sound command during stream.");
-        ackCommand(cmdId);
-        return;
-      }
-
-      if (strcmp(cmd, "STREAM_START") == 0) {
-        Serial.println("Executing command: STREAM_START");
-        String url = "";
-        bool bypassOther = false;
-        bool playPreChime = preAnnouncementEnabled;
-
-        if (!payload.isNull()) {
-          if (payload.containsKey("url")) {
-            url = payload["url"].as<String>();
-          }
-          if (payload.containsKey("bypass_other_audio")) {
-            bypassOther = payload["bypass_other_audio"].as<bool>();
-          } else if (payload.containsKey("allow_other_audio")) {
-            bypassOther = !payload["allow_other_audio"].as<bool>();
-          }
-          if (payload.containsKey("play_pre_announcement")) {
-            playPreChime = payload["play_pre_announcement"].as<bool>();
-          } else if (payload.containsKey("pre_announcement_enabled")) {
-            playPreChime = payload["pre_announcement_enabled"].as<bool>();
-          }
-          if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
-            preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
-          }
-          if (payload.containsKey("pre_announcement_delay_seconds")) {
-            preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
-          }
-        }
-
-        url.trim();
-        if (url.length() > 0) {
-          streamModeActive = true;
-          streamBypassOtherAudio = bypassOther;
-          streamModeUrl = url;
-          lastStreamRestartAttemptMs = 0;
-
-          ackCommand(cmdId); // Ack FIRST
-          executed = false;
-          if (playPreChime) {
-            playLocalPreAnnouncementChime(playPreChime);
-          }
-          startStreamPlayback(streamModeUrl);
-        } else {
-          Serial.println("Error: No URL provided for STREAM_START");
-        }
-      } else if (strcmp(cmd, "STREAM_STOP") == 0) {
-        Serial.println("Executing command: STREAM_STOP");
-        ackCommand(cmdId); // Ack FIRST
-        executed = false;
-        streamModeActive = false;
-        streamBypassOtherAudio = false;
-        streamModeUrl = "";
-        stopStreamPlayback();
-      } else if (strcmp(cmd, "EMERGENCY_STOP") == 0) {
-        Serial.println("Executing command: EMERGENCY_STOP");
-        streamModeActive = false;
-        streamBypassOtherAudio = false;
-        streamModeUrl = "";
-        stopStreamPlayback();
-        stopBuzzer();
-        executed = true;
-      } else if (strcmp(cmd, "RING") == 0) {
-        Serial.println("Executing command: RING");
-        ackCommand(cmdId); // Ack FIRST to release HTTPS connection and avoid SSL conflict
-        delay(50); // Yield to lwIP network stack to release TCP/TLS socket
-        executed = false;
-        playLocalPreAnnouncementChime(true); // Play selected pre-announcement chime
-        playBell("Manual Ring"); // Play actual bell chime/buzzer after pre-chime
-      } else if (strcmp(cmd, "PLAY_URL") == 0) {
-        Serial.println("Executing command: PLAY_URL");
-        String url = "";
-        bool playPreChime = preAnnouncementEnabled;
-        if (!payload.isNull()) {
-          if (payload.containsKey("url")) {
-            url = payload["url"].as<String>();
-          } else if (payload.containsKey("audio_url")) {
-            url = payload["audio_url"].as<String>();
-          }
-          if (payload.containsKey("play_pre_announcement")) {
-            playPreChime = payload["play_pre_announcement"].as<bool>();
-          } else if (payload.containsKey("pre_announcement_enabled")) {
-            playPreChime = payload["pre_announcement_enabled"].as<bool>();
-          }
-          if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
-            preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
-          }
-          if (payload.containsKey("pre_announcement_delay_seconds")) {
-            preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
-          }
-        }
-
-        if (url.length() > 0) {
-          url.trim();
-          Serial.println("Streaming URL: " + url);
-          ackCommand(cmdId); // Ack FIRST to avoid SSL conflict
-          delay(50); // Yield to lwIP network stack to release TCP/TLS socket
-          executed = false;
-          streamingTimeoutMs = 45000;
-
-          if (playPreChime) {
-            playLocalPreAnnouncementChime(playPreChime);
-          }
-
-          // Stop any existing I2S sound
-          if (audio) {
-            if (audio->isRunning())
-              audio->stopSong();
-          }
-
-          enableAmp();
-          initAudio(); // Allocate Audio Object
-          delay(50);
-          if (!audio) {
-            Serial.println("PLAY_URL: audio object NULL - aborting");
-            return;
-          }
-          lcdPlayingType = "Streaming";
-          lcdPlayingDetail = url;
-          audio->connecttohost(url.c_str());
-          audio->setVolume(getI2SVolumeFromSystem(systemVolume));
-          playState = PLAY_STREAMING;
-          playStateStartTime = millis();
-          updateLCD();
-        } else {
-          Serial.println("Error: No URL provided in payload");
-        }
-      } else if (strcmp(cmd, "TTS") == 0) {
-        Serial.println("Executing command: TTS");
-        String text = "";
-        String url = "";
-        String lang = "en";
-        String voiceGender = "";
-        bool playPreChime = preAnnouncementEnabled;
-
-        if (!payload.isNull()) {
-          if (payload.containsKey("text")) {
-            text = payload["text"].as<String>();
-          }
-          if (payload.containsKey("language")) {
-            lang = payload["language"].as<String>();
-          }
-          if (payload.containsKey("voice_gender")) {
-            voiceGender = payload["voice_gender"].as<String>();
-          } else if (payload.containsKey("gender")) {
-            voiceGender = payload["gender"].as<String>();
-          }
-          if (payload.containsKey("play_pre_announcement")) {
-            playPreChime = payload["play_pre_announcement"].as<bool>();
-          } else if (payload.containsKey("pre_announcement_enabled")) {
-            playPreChime = payload["pre_announcement_enabled"].as<bool>();
-          }
-          if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
-            preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
-          }
-          if (payload.containsKey("pre_announcement_delay_seconds")) {
-            preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
-          }
-          // Fallback: Check for URL if text is missing (Camb.ai might send URL
-          // in TTS command)
-          if (payload.containsKey("url")) {
-            url = payload["url"].as<String>();
-          }
-        }
-
-        if (text.length() > 0) {
-          ackCommand(cmdId); // Ack FIRST
-          delay(150); // Yield to lwIP network stack to release TCP/TLS socket
-          executed = false;
-          if (playPreChime) {
-            playLocalPreAnnouncementChime(playPreChime);
-          }
-          playTTS(text, lang, voiceGender);
-        } else if (url.length() > 0) {
-          Serial.println("TTS Command contains URL. Playing as Voice Note...");
-          ackCommand(cmdId); // Ack FIRST
-          delay(150); // Yield to lwIP network stack to release TCP/TLS socket
-          executed = false;
-          streamingTimeoutMs = 45000;
-
-          if (playPreChime) {
-            playLocalPreAnnouncementChime(playPreChime);
-          }
-
-          // Logic similar to VOICE_NOTE
-          if (audio && audio->isRunning())
-            audio->stopSong();
-          enableAmp();
-          initAudio();
-          if (!audio) {
-            Serial.println("TTS URL: audio object NULL - aborting");
-            return;
-          }
-          lcdPlayingType = "Voice Note";
-          lcdPlayingDetail = url;
-          audio->connecttohost(url.c_str());
-          audio->setVolume(getI2SVolumeFromSystem(systemVolume));
-          playState = PLAY_STREAMING;
-          playStateStartTime = millis(); // Reset timer for grace period
-          updateLCD();
-        } else {
-          Serial.println("Error: No text or url provided for TTS");
-        }
-      } else if (strcmp(cmd, "VOICE_NOTE") == 0) {
-        Serial.println("Executing command: VOICE_NOTE");
-        String url = "";
-        bool playPreChime = preAnnouncementEnabled;
-        if (!payload.isNull()) {
-          if (payload.containsKey("url")) {
-            url = payload["url"].as<String>();
-          }
-          if (payload.containsKey("play_pre_announcement")) {
-            playPreChime = payload["play_pre_announcement"].as<bool>();
-          } else if (payload.containsKey("pre_announcement_enabled")) {
-            playPreChime = payload["pre_announcement_enabled"].as<bool>();
-          }
-          if (payload.containsKey("pre_announcement_url") && payload["pre_announcement_url"].as<String>().length() > 0) {
-            preAnnouncementUrl = payload["pre_announcement_url"].as<String>();
-          }
-          if (payload.containsKey("pre_announcement_delay_seconds")) {
-            preAnnouncementDelaySeconds = payload["pre_announcement_delay_seconds"].as<int>();
-          }
-        }
-
-        if (url.length() > 0) {
-          url.trim();
-          Serial.println("Playing Voice Note: " + url);
-          ackCommand(cmdId); // Ack FIRST
-          delay(50); // Yield to lwIP network stack to release TCP/TLS socket
-
-          streamingTimeoutMs = 45000; // 45s safety timeout for Voice Notes
-
-          if (playPreChime) {
-            playLocalPreAnnouncementChime(playPreChime);
-          }
-
-          if (audio) {
-            if (audio->isRunning())
-              audio->stopSong();
-          }
-          enableAmp();
-          initAudio();
-          delay(50);
-          if (!audio) {
-            Serial.println("VOICE_NOTE: audio object NULL - aborting");
-            return;
-          }
-          lcdPlayingType = "Voice Note";
-          lcdPlayingDetail = url;
-          audio->connecttohost(url.c_str());
-          audio->setVolume(getI2SVolumeFromSystem(systemVolume));
-          playStateStartTime = millis();
-          playState = PLAY_STREAMING;
-          updateLCD();
-        } else {
-          Serial.println("Error: No URL provided for Voice Note");
-        }
-      } else if (strcmp(cmd, "TEST_BUZZER") == 0) {
-        Serial.println("Executing command: TEST_BUZZER");
-        testBuzzer();
-        executed = true;
-      } else if (strcmp(cmd, "TEST_AUDIO") == 0) {
-        Serial.println("Executing command: TEST_AUDIO");
-        ackCommand(cmdId);
-        delay(50);
-        executed = false;
-        playLocalPreAnnouncementChime(true);
-        playBell("Test Audio");
-      } else if (strcmp(cmd, "SYNC_TIME") == 0) {
-        Serial.println("Executing command: SYNC_TIME");
-        esp_sntp_stop();
-        esp_sntp_init();
-        Serial.println("Time Synced via Command");
-        executed = true;
-      } else if (strcmp(cmd, "CONFIG") == 0 ||
-                 strcmp(cmd, "SYNC_SCHEDULES") == 0) {
-        Serial.println("Config/Sync Command Received. Refreshing details...");
-        fetchDeviceDetails();
-        syncSchedules();
-        syncAudioCache();
-        executed = true;
-      } else if (strcmp(cmd, "SET_VOLUME") == 0) {
-        Serial.println("Executing command: SET_VOLUME");
-        if (!payload.isNull() && payload.containsKey("volume")) {
-          int newVol = payload["volume"].as<int>();
-          if (newVol >= 0 && newVol <= 100) {
-            systemVolume = newVol;
-            preferences.putInt("volume", systemVolume);
-
-            if (audio) {
-              audio->setVolume(getI2SVolumeFromSystem(systemVolume));
-            }
-            Serial.printf("Volume set to %d (I2S=%d)\n", systemVolume, getI2SVolumeFromSystem(systemVolume));
-            executed = true;
-          } else {
-            Serial.println("Invalid volume range (0-100)");
-          }
-        }
-      } else if (strcmp(cmd, "REBOOT") == 0) {
-        Serial.println("Reboot Command Received. Restarting in 1s...");
-        executed = true;
-      } else if (strcmp(cmd, "UPDATE_FIRMWARE") == 0) {
-        String url = "";
-        if (!payload.isNull() && payload.containsKey("url")) {
-          url = payload["url"].as<String>();
-        }
-
-        if (url.length() > 0) {
-          Serial.println("Starting OTA Update from: " + url);
-          // Ack FIRST to avoid SSL conflict and ensure server knows we got it
-          // We must manually ack here because update() will reboot
-          WiFiClientSecure ackClient;
-          ackClient.setInsecure();
-          HTTPClient ackHttp;
-          ackHttp.begin(ackClient,
-                        String(SUPABASE_URL) + "/rest/v1/rpc/ack_command");
-          ackHttp.addHeader("apikey", SUPABASE_KEY);
-          ackHttp.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-          ackHttp.addHeader("Content-Type", "application/json");
-          ackHttp.POST("{\"p_command_id\": " + cmdId + "}");
-          ackHttp.end();
-          delay(300); // Yield to lwIP network stack to release SSL socket
-
-          executed = false; // Prevent double ack
-
-          performOTAUpdate(url);
-        } else {
-          Serial.println("Error: No URL provided for Firmware Update");
-        }
-      }
-
-      // Ack
-      if (executed) {
-        Serial.println("Command Executed. Sending Ack...");
-        WiFiClientSecure ackClient;
-        ackClient.setInsecure();
-        HTTPClient ackHttp;
-        ackHttp.begin(ackClient, String(SUPABASE_URL) + "/rest/v1/rpc/ack_command");
-        ackHttp.addHeader("apikey", SUPABASE_KEY);
-        ackHttp.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-        ackHttp.addHeader("Content-Type", "application/json");
-        ackHttp.POST("{\"p_command_id\": " + cmdId + ", \"p_device_mac\": \"" + deviceMacAddress + "\"}");
-        ackHttp.end();
-
-        if (strcmp(cmd, "REBOOT") == 0) {
-          delay(1000);
-          ESP.restart();
-        }
-      }
+      // Execute command via unified dispatcher
+      executeCommand(cmd, payload, cmdId);
     } else {
       // Debug: No command found (optional, can be noisy)
       // Serial.println("No pending commands.");
@@ -3366,6 +3409,7 @@ void parseSchedules(const JsonDocument &doc) {
       preferences.putString("school_id", schoolId);
       preferences.putBool("is_active", true);
       currentState = STATE_ACTIVE;
+      RealtimeClient::getInstance().setSchoolId(schoolId);
     }
   }
 
